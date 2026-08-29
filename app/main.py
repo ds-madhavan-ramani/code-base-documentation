@@ -25,6 +25,9 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 load_dotenv()
 
+DEV_MODEL = os.getenv("OLLAMA_DEV_MODEL", "qwen2.5-coder:7b")
+USER_MODEL = os.getenv("OLLAMA_USER_MODEL", "qwen2.5-coder:7b")
+
 st.set_page_config(page_title="Codebase Documentor", layout="wide")
 st.title("🔍 Codebase Documentation Generator")
 
@@ -43,7 +46,8 @@ def init_clients():
     job_queue = JobQueue(os.getenv("JOBS_DIR", "./data/jobs"))
 
     # Start background worker
-    worker = BackgroundWorker(job_queue, odysseus_harness, ollama, doc_gen)
+    worker = BackgroundWorker(job_queue, odysseus_harness, ollama, doc_gen,
+                               dev_model=DEV_MODEL, user_model=USER_MODEL)
     worker.start()
 
     return odysseus, odysseus_harness, ollama, doc_gen, job_queue, worker
@@ -129,7 +133,7 @@ if uploaded_files:
                     architecture=analysis.get("architecture", "")
                 )
                 dev_docs = ollama.generate(
-                    "qwen2.5-coder:32b",
+                    DEV_MODEL,
                     dev_docs_prompt,
                     context_length=8192
                 )
@@ -140,7 +144,7 @@ if uploaded_files:
                     modules=", ".join(analysis.get("key_modules", [])[:5])
                 )
                 user_docs = ollama.generate(
-                    "qwen2.5-coder:7b",
+                    USER_MODEL,
                     user_docs_prompt,
                     context_length=4096
                 )
