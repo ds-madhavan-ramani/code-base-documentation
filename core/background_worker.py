@@ -19,12 +19,15 @@ class BackgroundWorker:
     """Process analysis jobs in background thread."""
 
     def __init__(self, job_queue: JobQueue, odysseus: OdysseusHarness,
-                 ollama: OllamaClient, doc_gen: DocumentationGenerator):
+                 ollama: OllamaClient, doc_gen: DocumentationGenerator,
+                 dev_model: str = "qwen2.5-coder:7b", user_model: str = "qwen2.5-coder:7b"):
         self.job_queue = job_queue
         self.odysseus = odysseus
         self.ollama = ollama
         self.doc_gen = doc_gen
         self.github = GitHubClient()
+        self.dev_model = dev_model
+        self.user_model = user_model
         self.is_running = False
         self.thread: Optional[threading.Thread] = None
 
@@ -138,7 +141,7 @@ class BackgroundWorker:
             )
 
             dev_docs = self.ollama.generate(
-                "qwen2.5-coder:7b",
+                self.dev_model,
                 prompt,
                 context_length=8192
             )
@@ -155,7 +158,7 @@ class BackgroundWorker:
             )
 
             user_docs = self.ollama.generate(
-                "qwen2.5-coder:7b",
+                self.user_model,
                 prompt,
                 context_length=4096
             )
