@@ -1,0 +1,122 @@
+import json
+import logging
+import uuid
+from pathlib import Path
+from datetime import datetime
+from typing import Dict, Optional, List
+from enum import Enum
+
+logger = logging.getLogger(__name__)
+
+class JobStatus(str, Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+class Job:
+    def __init__(self, job_id: str, repo_name: str, source_type: str, source: str):
+        self.job_id = job_id
+        self.repo_name = repo_name
+        self.source_type = source_type  # "upload", "github"
+        self.source = source
+        self.status = JobStatus.PENDING
+        self.created_at = datetime.now().isoformat()
+        self.started_at = None
+        self.completed_at = None
+        self.progress = 0
+        self.analysis = {}
+        self.error = None
+        self.results = {}
+
+    def to_dict(self) -> Dict:
+        return {
+            "job_id": self.job_id,
+            "repo_name": self.repo_name,
+            "source_type": self.source_type,
+            "source": self.source,
+            "status": self.status.value,
+            "created_at": self.created_at,
+            "started_at": self.started_at,
+            "completed_at": self.completed_at,
+            "progress": self.progress,
+            "analysis": self.analysis,
+            "error": self.error,
+            "results": self.results
+        }
+
+class JobQueue:
+    def __init__(self, storage_dir: str = "./data/jobs"):
+        self.storage_dir = Path(storage_dir)
+        self.storage_dir.mkdir(parents=True, exist_ok=True)
+        self.jobs: Dict[str, Job] = {}
+        self._load_jobs()
+
+    def create_job(self, repo_name: str, source_type: str, source: str) -> Job:
+        """Create a new analysis job."""
+        job_id = str(uuid.uuid4())[:8]
+        job = Job(job_id, repo_name, source_type, source)
+        self.jobs[job_id] = job
+        self._save_job(job)
+        logger.info(f"Created job {job_id} for {repo_name}")
+        return job
+
+    def get_job(self, job_id: str) -> Optional[Job]:
+        """Retrieve job by ID."""
+        return self.jobs.get(job_id)
+
+    def update_job(self, job_id: str, status: JobStatus = None, progress: int = None,
+                   analysis: Dict = None, error: str = None):
+        """Update job status and progress."""
+        job = self.jobs.get(job_id)
+        if not job:
+            return
+
+        if status:
+            job.status = status
+            if status == JobStatus.RUNNING and not job.started_at:
+                job.started_at = datetime.now().isoformat()
+            elif status == JobStatus.COMPLETED:
+                job.completed_at = datetime.now().isoformat()
+
+        if progress is not None:
+            job.progress = progress
+
+        if analysis:
+            job.analysis = analysis
+
+        if error:
+            job.error = error
+
+        self._save_job(job)
+
+    def list_jobs(self, repo_name: str = None) -> List[Job]:
+        """List all jobs, optionally filtered by repo."""
+        jobs = list(self.jobs.values())
+        if repo_name:
+            jobs = [j for j in jobs if j.repo_name == repo_name]
+        return sorted(jobs, key=lambda j: j.created_at, reverse=True)
+
+    def _save_job(self, job: Job):
+        """Persist job to disk."""
+        job_file = self.storage_dir / f"{job.job_id}.json"
+        job_file.write_text(json.dumps(job.to_dict(), indent=2))
+
+    def _load_jobs(self):
+        """Load all persisted jobs."""
+        for job_file in self.storage_dir.glob("*.json"):
+            try:
+                data = json.loads(job_file.read_text())
+                job = Job(data["job_id"], data["repo_name"],
+                         data["source_type"], data["source"])
+                job.status = JobStatus(data["status"])
+                job.created_at = data["created_at"]
+                job.started_at = data.get("started_at")
+                job.completed_at = data.get("completed_at")
+                job.progress = data.get("progress", 0)
+                job.analysis = data.get("analysis", {})
+                job.error = data.get("error")
+                job.results = data.get("results", {})
+                self.jobs[job.job_id] = job
+            except Exception as e:
+                logger.error(f"Failed to load job {job_file}: {e}")
