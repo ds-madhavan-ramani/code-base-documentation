@@ -1,44 +1,73 @@
-"""Analysis agent powered by Odysseus Harness for deep code understanding."""
+"""Analysis agent powered by Odysseus Harness using local Ollama models.
+
+Uses Odysseus to orchestrate deep code analysis with open-source LLMs,
+keeping everything local and offline.
+"""
 
 import logging
 import tempfile
 import json
 from pathlib import Path
 from typing import Dict, Optional
-from odysseus import Harness
+import sys
 
 logger = logging.getLogger(__name__)
 
+# Import our custom Ollama provider for Odysseus
+from core.odysseus_ollama_provider import (
+    health_check,
+    list_available_models,
+    complete,
+    OLLAMA_URL,
+    DEFAULT_MODEL,
+)
+
+# Dynamically inject our provider into Odysseus
+import odysseus.provider as provider_module
+
+provider_module.complete = complete
+provider_module.DEFAULT_MODEL = DEFAULT_MODEL
+
 
 class OdysseusAnalysisAgent:
-    """Uses Odysseus Harness to perform deep code analysis."""
+    """Uses Odysseus Harness with Ollama models for deep code analysis."""
 
-    def __init__(self, model: str = "claude-opus-4-1"):
+    def __init__(self, model: str = None):
         """
-        Initialize Odysseus Analysis Agent.
+        Initialize Odysseus Analysis Agent with Ollama backend.
 
         Args:
-            model: Claude model to use (Odysseus will use ODYSSEUS_MODEL env var by default)
+            model: Ollama model name (e.g., "qwen2.5-coder:32b")
+                  Defaults to ODYSSEUS_MODEL env var or qwen2.5-coder:32b
         """
-        self.model = model
-        self.harness = None
+        self.model = model or DEFAULT_MODEL
+        self.ollama_url = OLLAMA_URL
+        self._verify_ollama()
 
-    def _init_harness(self, workdir: str) -> Harness:
-        """Initialize Odysseus harness for analysis."""
-        if self.harness is None:
-            self.harness = Harness(
-                workdir=workdir,
-                model=self.model,
-                budget_tokens=200_000,  # Generous budget for analysis
-                max_turns=50,
+    def _verify_ollama(self):
+        """Verify Ollama is running and model is available."""
+        if not health_check():
+            raise RuntimeError(
+                f"Ollama not responding at {self.ollama_url}. "
+                "Start it with: ollama serve"
             )
-        return self.harness
 
-    def analyze_deep(
-        self, code_files: Dict[str, str], repo_name: str
-    ) -> Dict:
+        models = list_available_models()
+        if not models:
+            raise RuntimeError(
+                f"No models available in Ollama at {self.ollama_url}. "
+                f"Pull a model: ollama pull {self.model}"
+            )
+
+        if self.model not in models:
+            logger.warning(
+                f"Model '{self.model}' not found in Ollama. "
+                f"Available: {models[:3]}"
+            )
+
+    def analyze_deep(self, code_files: Dict[str, str], repo_name: str) -> Dict:
         """
-        Run deep code analysis using Odysseus Harness.
+        Run deep code analysis using Odysseus with Ollama models.
 
         Args:
             code_files: Dict of {filename: content}
@@ -47,100 +76,112 @@ class OdysseusAnalysisAgent:
         Returns:
             Analysis results with architecture, patterns, dependencies, etc.
         """
-        with tempfile.TemporaryDirectory() as tmpdir:
-            tmpdir_path = Path(tmpdir)
+        try:
+            from odysseus import Harness
 
-            # Write code files to temp directory for Odysseus to analyze
-            for filename, content in code_files.items():
-                file_path = tmpdir_path / filename
-                file_path.parent.mkdir(parents=True, exist_ok=True)
-                file_path.write_text(content)
+            with tempfile.TemporaryDirectory() as tmpdir:
+                tmpdir_path = Path(tmpdir)
 
-            try:
-                harness = self._init_harness(str(tmpdir_path))
+                # Write code files to temp directory
+                for filename, content in code_files.items():
+                    file_path = tmpdir_path / filename
+                    file_path.parent.mkdir(parents=True, exist_ok=True)
+                    file_path.write_text(content)
 
-                # Use Odysseus to analyze the codebase
+                # Initialize Odysseus with our Ollama provider
+                harness = Harness(
+                    workdir=str(tmpdir_path),
+                    model=self.model,
+                    budget_tokens=100_000,  # Conservative for local models
+                    max_turns=20,
+                )
+
+                # Run analysis
                 prompt = self._build_analysis_prompt(repo_name, code_files)
                 analysis_result = harness.run(prompt)
 
-                # Parse the analysis result
+                # Parse results
                 analysis = self._parse_analysis(
                     analysis_result, code_files, repo_name
                 )
                 return analysis
 
-            except Exception as e:
-                logger.error(f"Odysseus analysis failed: {e}")
-                return self._lightweight_analysis(code_files, repo_name)
+        except Exception as e:
+            logger.error(f"Odysseus analysis failed: {e}")
+            logger.info("Using lightweight fallback analysis")
+            return self._lightweight_analysis(code_files, repo_name)
 
     def _build_analysis_prompt(
         self, repo_name: str, code_files: Dict[str, str]
     ) -> str:
-        """Build analysis prompt for Odysseus."""
+        """Build analysis prompt optimized for open-source models."""
         file_summary = "\n".join(
-            f"- {name} ({len(content)} chars)"
-            for name, content in list(code_files.items())[:20]
+            f"  • {name} ({len(content)} chars)"
+            for name, content in list(code_files.items())[:15]
         )
 
-        return f"""Analyze this codebase and provide deep insights:
+        return f"""Analyze this codebase and provide structured insights.
 
-Repository: {repo_name}
+REPOSITORY: {repo_name}
+FILES: {len(code_files)} total
 
-Files ({len(code_files)} total):
+Sample files:
 {file_summary}
 
-Please analyze and provide:
-1. **Architecture**: Overall system design and structure
-2. **Key Components**: Main modules, classes, and functions
-3. **Dependencies**: External and internal dependencies
-4. **Patterns**: Design patterns and architectural patterns used
-5. **Data Flow**: How data flows through the system
-6. **Key Insights**: Notable patterns, potential issues, strengths
+TASK: Provide a deep analysis with these sections:
 
-Format your response as JSON with these exact keys:
-- architecture (string)
-- key_modules (list of strings)
-- dependencies (list of strings)
-- patterns (list of strings)
-- data_flow (string)
-- key_insights (string)
-- file_tree (string)
+1. **ARCHITECTURE**: Overall system design and layers
+2. **KEY_MODULES**: Main components and responsibilities
+3. **DEPENDENCIES**: External libraries and internal connections
+4. **PATTERNS**: Design patterns, architectural patterns used
+5. **DATA_FLOW**: How data moves through the system
+6. **KEY_INSIGHTS**: Notable strengths, potential issues, technical highlights
 
-Start with {{{{ and end with }}}} for valid JSON parsing."""
+FORMAT: Respond with valid JSON only (no markdown, no ```json``` wrapper):
+{{
+  "architecture": "string describing overall design",
+  "key_modules": ["list", "of", "main", "modules"],
+  "dependencies": ["list", "of", "dependencies"],
+  "patterns": ["list", "of", "patterns"],
+  "data_flow": "description of data flow",
+  "key_insights": "string with key findings"
+}}
+
+Be concise but insightful. Focus on what makes this codebase unique."""
 
     def _parse_analysis(
         self, result: str, code_files: Dict[str, str], repo_name: str
     ) -> Dict:
-        """Parse Odysseus analysis result."""
+        """Parse analysis result from model."""
+        analysis = {}
+
         try:
-            # Extract JSON from result
+            # Extract JSON
             start = result.find("{")
             end = result.rfind("}") + 1
             if start >= 0 and end > start:
                 json_str = result[start:end]
                 analysis = json.loads(json_str)
-            else:
-                analysis = {}
         except (json.JSONDecodeError, ValueError):
-            logger.warning("Failed to parse JSON from analysis, using fallback")
-            analysis = {}
+            logger.warning("Could not parse JSON from analysis, using defaults")
 
-        # Ensure required fields
+        # Ensure all required fields with fallbacks
         return {
             "repo_name": repo_name,
             "architecture": analysis.get(
-                "architecture", "Analysis from Odysseus Harness"
+                "architecture", "Deep analysis via Odysseus + Ollama"
             ),
             "key_modules": analysis.get("key_modules", list(code_files.keys())[:10]),
             "dependencies": analysis.get("dependencies", []),
             "patterns": analysis.get("patterns", []),
             "data_flow": analysis.get("data_flow", ""),
             "key_insights": analysis.get("key_insights", ""),
-            "file_tree": analysis.get("file_tree", self._build_file_tree(code_files)),
+            "file_tree": self._build_file_tree(code_files),
             "metrics": {
                 "total_files": len(code_files),
                 "total_lines": sum(len(v.split("\n")) for v in code_files.values()),
             },
+            "model_used": self.model,
             "fallback": False,
         }
 
@@ -158,7 +199,9 @@ Start with {{{{ and end with }}}} for valid JSON parsing."""
             if filename.endswith(".py"):
                 for line in content.split("\n"):
                     if line.startswith("import ") or line.startswith("from "):
-                        imports.add(line.split()[1].split(".")[0])
+                        parts = line.split()
+                        if len(parts) > 1:
+                            imports.add(parts[1].split(".")[0])
                     elif line.strip().startswith("def "):
                         func_name = line.split("(")[0].replace("def ", "").strip()
                         functions.append(func_name)
@@ -169,7 +212,7 @@ Start with {{{{ and end with }}}} for valid JSON parsing."""
         return {
             "repo_name": repo_name,
             "fallback": True,
-            "architecture": "Lightweight analysis (Odysseus unavailable)",
+            "architecture": "Lightweight fallback analysis (Odysseus unavailable)",
             "key_modules": list(code_files.keys())[:10],
             "dependencies": sorted(list(imports))[:20],
             "patterns": [],
@@ -179,24 +222,36 @@ Start with {{{{ and end with }}}} for valid JSON parsing."""
                 "total_files": len(code_files),
                 "total_lines": sum(len(v.split("\n")) for v in code_files.values()),
             },
+            "model_used": "fallback",
         }
 
     def generate_system_diagram(self, analysis: Dict) -> str:
-        """Generate Mermaid system diagram from analysis."""
+        """Generate Mermaid diagram from analysis."""
         if analysis.get("fallback"):
             return "## System Architecture\n\n(Deep analysis not available)"
 
-        # Build a simple diagram from architecture description
         modules = analysis.get("key_modules", [])
         if not modules:
             return ""
 
+        # Build simple diagram
         diagram = "graph TD\n"
         for i, module in enumerate(modules[:5]):
+            module_safe = module.replace(".", "_").replace("-", "_")
             diagram += f"  M{i}[{module}]\n"
 
-        # Add simple connections
+        # Add connections
         for i in range(len(modules[:5]) - 1):
             diagram += f"  M{i} --> M{i+1}\n"
 
         return f"```mermaid\n{diagram}\n```"
+
+
+def get_available_models() -> list[str]:
+    """Get list of available Ollama models."""
+    return list_available_models()
+
+
+def check_ollama_health() -> bool:
+    """Check if Ollama is running and healthy."""
+    return health_check()
