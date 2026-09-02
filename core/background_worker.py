@@ -6,7 +6,7 @@ from typing import Optional, Dict
 from pathlib import Path
 
 from core.job_queue import JobQueue, JobStatus
-from core.odysseus_harness import OdysseusHarness
+from core.odysseus_analysis_agent import OdysseusAnalysisAgent
 from core.github_client import GitHubClient
 from core.code_parser import CodeParser
 from core.ollama_client import OllamaClient
@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 class BackgroundWorker:
     """Process analysis jobs in background thread."""
 
-    def __init__(self, job_queue: JobQueue, odysseus: OdysseusHarness,
+    def __init__(self, job_queue: JobQueue, odysseus: OdysseusAnalysisAgent,
                  ollama: OllamaClient, doc_gen: DocumentationGenerator,
                  dev_model: str = "qwen2.5-coder:7b", user_model: str = "qwen2.5-coder:7b"):
         self.job_queue = job_queue

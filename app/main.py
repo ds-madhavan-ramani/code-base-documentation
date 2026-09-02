@@ -13,8 +13,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from core.code_parser import CodeParser
 from core.ollama_client import OllamaClient
-from core.odysseus_client import OdysseusClient
-from core.odysseus_harness import OdysseusHarness
+from core.odysseus_analysis_agent import OdysseusAnalysisAgent
 from core.github_client import GitHubClient
 from core.doc_generator import DocumentationGenerator
 from core.job_queue import JobQueue, JobStatus
@@ -36,32 +35,30 @@ input_mode = st.sidebar.radio("Input Source", ["📁 Local Upload", "🐙 GitHub
 
 @st.cache_resource
 def init_clients():
-    odysseus_url = os.getenv("ODYSSEUS_API_URL", "http://localhost:8000")
     ollama_url = os.getenv("OLLAMA_API_URL", "http://localhost:11434")
 
-    odysseus = OdysseusClient(odysseus_url)
-    odysseus_harness = OdysseusHarness(odysseus_url)
+    # Initialize Odysseus Analysis Agent (direct harness, no API needed)
+    odysseus_model = os.getenv("ODYSSEUS_MODEL", "claude-opus-4-1")
+    odysseus = OdysseusAnalysisAgent(model=odysseus_model)
+
     ollama = OllamaClient(ollama_url)
     doc_gen = DocumentationGenerator(os.getenv("OUTPUT_DIR", "./data/outputs"))
     job_queue = JobQueue(os.getenv("JOBS_DIR", "./data/jobs"))
 
     # Start background worker
-    worker = BackgroundWorker(job_queue, odysseus_harness, ollama, doc_gen,
+    worker = BackgroundWorker(job_queue, odysseus, ollama, doc_gen,
                                dev_model=DEV_MODEL, user_model=USER_MODEL)
     worker.start()
 
-    return odysseus, odysseus_harness, ollama, doc_gen, job_queue, worker
+    return odysseus, ollama, doc_gen, job_queue, worker
 
-odysseus, odysseus_harness, ollama, doc_gen, job_queue, worker = init_clients()
+odysseus, ollama, doc_gen, job_queue, worker = init_clients()
 
 st.sidebar.markdown("### Service Status")
 col1, col2 = st.sidebar.columns(2)
 
 with col1:
-    if odysseus.health_check():
-        st.sidebar.success("✓ Odysseus")
-    else:
-        st.sidebar.warning("✗ Odysseus")
+    st.sidebar.success("✓ Odysseus (Direct)")
 
 with col2:
     if ollama.health_check():
