@@ -44,16 +44,24 @@ This document describes the autonomous agents and workflows available in the sys
 3. If all fail → use any available model
 4. If none available → error
 
-**Generation Style:** Section-by-section, not one shot — each document is
-broken into independent sections (`utils/prompts.py`), and Ollama is
-called once per section so a smaller model doesn't run out of depth over
-one long completion. See README.md's "Documentation Generation
-(Section-by-Section)" section for the flow diagram.
-- `DEV_DOCS_SECTIONS` (7 calls) - Big Picture, Systems View, Architecture &
-  Patterns, Module & Dependency Map, Key APIs/Functions/Classes,
-  Configuration & Workflow, Common Tasks & Troubleshooting
-- `USER_DOCS_SECTIONS` (4 calls) - Big Picture, Quick Start & Install,
-  Features & Workflows, FAQ & Support
+**Generation Style:** Section-by-section and grounded, not one shot
+(`utils/prompts.py`). Fixed whole-document sections still run once each;
+the sections most prone to hallucination (feature explanations, per-file
+code detail) are generated dynamically instead — one real feature or one
+real source file per call, with that file's actual content in the prompt —
+so the model explains code it's genuinely shown rather than inventing
+plausible-sounding function names or repo URLs. See README.md's
+"Documentation Generation (Grounded, Section-by-Section)" section for the
+full flow diagram.
+- **Dev Docs:** `DEV_DOCS_TIER1_SECTIONS` (Big Picture, Systems View,
+  Architecture & Patterns) → `build_feature_map_section()` (1 call) →
+  `build_file_walkthrough_sections()` (1 call per significant file, capped
+  at `DEV_DOCS_MAX_FILES`) → `DEV_DOCS_TAIL_SECTIONS` (Configuration &
+  Workflow, Common Tasks & Troubleshooting)
+- **User Guide:** `USER_DOCS_HEAD_SECTIONS` (Big Picture, Quick Start &
+  Install) → `build_user_feature_sections()` (1 call per feature, sharing
+  the same `identify_features()` result as the dev docs) →
+  `USER_DOCS_TAIL_SECTIONS` (FAQ & Support)
 
 ---
 

@@ -19,10 +19,17 @@ from core.doc_generator import DocumentationGenerator
 from core.job_queue import JobQueue, JobStatus
 from core.background_worker import BackgroundWorker
 from utils.prompts import (
-    DEV_DOCS_SECTIONS,
-    USER_DOCS_SECTIONS,
+    DEV_DOCS_TIER1_SECTIONS,
+    DEV_DOCS_TAIL_SECTIONS,
+    USER_DOCS_HEAD_SECTIONS,
+    USER_DOCS_TAIL_SECTIONS,
     build_doc_context,
     build_sectioned_doc,
+    select_significant_files,
+    identify_features,
+    build_feature_map_section,
+    build_file_walkthrough_sections,
+    build_user_feature_sections,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -143,33 +150,75 @@ if uploaded_files:
             doc_context = build_doc_context(analysis)
             doc_context["file_tree"] = file_tree  # richer tree from CodeParser than analysis's own
 
+            status_line.caption("🔍 Extracting real per-file structure...")
+            file_structures = parser.build_file_structures(code_files)
+            significant_files = select_significant_files(
+                code_files, file_structures, key_modules=analysis.get("key_modules")
+            )
+
+            status_line.caption("🔍 Identifying real features...")
+            features = identify_features(ollama, DEV_MODEL, doc_context, significant_files, file_structures)
+
             want_dev = doc_type in ("both", "dev")
             want_user = doc_type in ("both", "user")
-            sections_total = (len(DEV_DOCS_SECTIONS) if want_dev else 0) + \
-                              (len(USER_DOCS_SECTIONS) if want_user else 0)
+            sections_total = 0
+            if want_dev:
+                sections_total += len(DEV_DOCS_TIER1_SECTIONS) + 1 + len(significant_files) + len(DEV_DOCS_TAIL_SECTIONS)
+            if want_user:
+                sections_total += len(USER_DOCS_HEAD_SECTIONS) + len(features) + len(USER_DOCS_TAIL_SECTIONS)
             done = {"n": 0}
 
             def report(label, index, total, title):
                 done["n"] += 1
-                progress.progress(10 + int(80 * done["n"] / sections_total))
-                status_line.caption(f"🔄 {label} — section {index}/{total}: {title}")
+                progress.progress(10 + int(80 * done["n"] / sections_total) if sections_total else 90)
+                status_line.caption(f"🔄 {label} — {index}/{total}: {title}")
 
             progress.progress(10)
 
             dev_docs = None
             if want_dev:
-                dev_body = build_sectioned_doc(
-                    ollama, DEV_MODEL, DEV_DOCS_SECTIONS, doc_context, context_length=8192,
+                tier1 = build_sectioned_doc(
+                    ollama, DEV_MODEL, DEV_DOCS_TIER1_SECTIONS, doc_context, context_length=8192,
                     on_section=lambda i, t, title: report("Developer docs", i, t, title)
                 )
+                feature_map = build_feature_map_section(ollama, DEV_MODEL, doc_context, features, context_length=8192)
+                report("Developer docs", 1, 1, "Feature -> File Map")
+                walkthroughs = build_file_walkthrough_sections(
+                    ollama, DEV_MODEL, code_files, file_structures, significant_files, doc_context,
+                    context_length=8192,
+                    on_file=lambda i, t, filename: report("Developer docs — file walkthrough", i, t, filename)
+                )
+                tail = build_sectioned_doc(
+                    ollama, DEV_MODEL, DEV_DOCS_TAIL_SECTIONS, doc_context, context_length=8192,
+                    on_section=lambda i, t, title: report("Developer docs", i, t, title)
+                )
+                dev_body = "\n\n".join([
+                    tier1,
+                    "## Feature → File Map\n\n" + feature_map,
+                    "## Per-File Code Walkthrough\n\n" + walkthroughs,
+                    tail,
+                ])
                 dev_docs = f"# Developer Documentation: {doc_context['repo_name']}\n\n{dev_body}"
 
             user_docs = None
             if want_user:
-                user_body = build_sectioned_doc(
-                    ollama, USER_MODEL, USER_DOCS_SECTIONS, doc_context, context_length=4096,
+                head = build_sectioned_doc(
+                    ollama, USER_MODEL, USER_DOCS_HEAD_SECTIONS, doc_context, context_length=4096,
                     on_section=lambda i, t, title: report("User guide", i, t, title)
                 )
+                feature_sections = build_user_feature_sections(
+                    ollama, USER_MODEL, doc_context, features, context_length=4096,
+                    on_feature=lambda i, t, name: report("User guide — feature", i, t, name)
+                )
+                user_tail = build_sectioned_doc(
+                    ollama, USER_MODEL, USER_DOCS_TAIL_SECTIONS, doc_context, context_length=4096,
+                    on_section=lambda i, t, title: report("User guide", i, t, title)
+                )
+                user_body = "\n\n".join([
+                    head,
+                    "## Features & How to Use Them\n\n" + feature_sections,
+                    user_tail,
+                ])
                 user_docs = f"# User Guide: {doc_context['repo_name']}\n\n{user_body}"
 
             status_line.caption("💾 Saving documentation...")

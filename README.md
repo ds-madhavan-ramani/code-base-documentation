@@ -123,49 +123,83 @@ Your Codebase
 | **Templates** | Jinja2 | Dynamic prompt generation |
 | **Version Control** | Git | Repository management |
 
-### 📝 Documentation Generation (Section-by-Section)
+### 📝 Documentation Generation (Grounded, Section-by-Section)
 
-A small local model (e.g. `qwen2.5-coder:7b`) tends to run out of depth if
-asked to write a whole multi-section document in one completion. So instead
-of one prompt per document, `utils/prompts.py` breaks each document into
-independent sections — 7 for Developer Docs, 4 for the User Guide — and
-calls Ollama once per section, then concatenates the results:
+Two problems showed up in real output from small local models
+(`qwen2.5-coder:7b` / `qwen3:32b`):
+
+1. **Depth** — one model call asked to write a whole multi-section document
+   runs out of steam partway through.
+2. **Hallucination** — a model asked to describe "the codebase" in the
+   abstract, with no real file content in front of it, fills gaps with
+   plausible-sounding invention: a fabricated `git clone` URL, a made-up
+   support email, function signatures that don't exist in the code.
+
+The fix for (1) is asking for one section at a time. The fix for (2) is
+never asking the model to describe something it hasn't actually been shown —
+so `utils/prompts.py` grounds each section in real data: the real repo URL,
+the real dependency list, and — for the sections that need code-level
+detail — the real file content and real regex-extracted function/class
+names (`code_parser.build_file_structures`), with an explicit instruction
+not to invent what isn't given.
 
 ```mermaid
 flowchart TD
-    A["Analysis dict<br/>architecture, key_modules, dependencies,<br/>reductionist_view, systems_view, ..."] --> B["build_doc_context()"]
-    B --> C{"build_sectioned_doc()"}
-    C --> S1["Section: Big Picture"]
-    C --> S2["Section: Systems View"]
-    C --> S3["Section: Architecture & Patterns"]
-    C --> S4["Section: ...more sections"]
-    S1 --> G1["ollama.generate()"]
-    S2 --> G2["ollama.generate()"]
-    S3 --> G3["ollama.generate()"]
-    S4 --> G4["ollama.generate()"]
-    G1 --> D["Concatenate as Markdown<br/>## <section title> per block"]
-    G2 --> D
-    G3 --> D
-    G4 --> D
-    D --> E["DEVELOPER_DOCS.md / USER_GUIDE.md"]
+    CF["code_files<br/>(real file content)"] --> FS["build_file_structures()<br/>regex: real imports/functions/classes per file"]
+    A["Odysseus analysis<br/>architecture, reductionist_view, systems_view, ..."] --> CTX["build_doc_context()<br/>+ real repo_url"]
+    FS --> SIG["select_significant_files()<br/>rank by real function/class count"]
+    CTX --> SIG
+    SIG --> FEAT["identify_features()<br/>ONE call — features named only from real files/functions given"]
+
+    CTX --> T1["Tier 1: Big Picture, Systems View,<br/>Architecture & Patterns"]
+    FEAT --> T2["Tier 2: Feature → File Map<br/>ONE call, grounded in real features"]
+    SIG --> T3["Tier 3: Per-File Walkthrough<br/>ONE call PER significant file,<br/>given that file's real source code"]
+    CTX --> TAIL["Tail: Setup, Troubleshooting<br/>(real repo_url + dependencies)"]
+
+    T1 --> DEV["DEVELOPER_DOCS.md"]
+    T2 --> DEV
+    T3 --> DEV
+    TAIL --> DEV
+
+    FEAT --> UFEAT["Tier 2 (User Guide): one call per feature,<br/>usage-level, same feature list as Dev Docs"]
+    CTX --> UHEAD["Big Picture, Quick Start & Install<br/>(real repo_url + dependencies)"]
+    UHEAD --> USER["USER_GUIDE.md"]
+    UFEAT --> USER
 ```
 
-Each section gets the model's full attention and output budget instead of
-sharing it across the whole document, so detail and completeness stop
-being capped by how much a smaller model can hold together in one
-completion. The trade-off: more Ollama calls per document (7-11 instead of
-1), so generation takes longer — most noticeable on the synchronous Local
-Upload path, less so on the backgrounded GitHub job path.
+**Developer Docs** follow the structure of the diagram above: a high-level
+flow (Tier 1), then a **Feature → File Map** saying what to touch to extend
+each real feature, then a **Per-File Code Walkthrough** — one Ollama call
+per significant source file (ranked by real function/class count, capped at
+`DEV_DOCS_MAX_FILES`, default 12; override via env var) — with that file's
+actual source in the prompt, so the model explains code it's genuinely
+looking at rather than inventing a plausible-sounding function name.
+
+**User Guide** shares the same `identify_features()` call as the dev docs —
+so both documents describe a consistent set of real capabilities — and
+turns each into a usage-level "how to use this feature" section instead of
+one generic "Features & Common Workflows" paragraph.
+
+This is a deterministic Python-level orchestrator (a plain loop assigning
+one Ollama call per file/feature), not an LLM deciding on its own how to
+decompose the work — that keeps it controllable and debuggable. (Odysseus
+itself has an emergent sub-agent tool — `spawn_agent`/`fleet.py` — but using
+it wouldn't fix hallucination on its own: a sub-agent with no real file
+content in front of it still invents things. The fix is the grounding, not
+who's doing the writing.)
+
+The trade-off: many more Ollama calls per document than a single-shot
+prompt — roughly `6 + significant_files` for Dev Docs and `3 + features`
+for the User Guide — so generation takes noticeably longer, especially on
+the synchronous Local Upload path.
 
 Both flows also take a **Document Type** choice (Both / Developer Docs
 Only / End-User Guide Only) up front, so only the sections for the
-requested type(s) run — skipping the User Guide's 4 sections when only
-Developer Docs were asked for, for example. And because
-`build_sectioned_doc()` reports each section as it starts, both flows
-surface a live one-line status ("Developer docs — section 3/7: Architecture
-& Design Patterns") instead of a silent progress bar — on the GitHub path
-this is stored on the job (`current_step`) and the View Jobs page
-auto-refreshes to show it moving.
+requested type(s) run. And because every generation step reports itself
+before it runs, both flows surface a live one-line status (e.g.
+"Developer docs — file walkthrough — 3/12: contract_extraction.py") instead
+of a silent progress bar — on the GitHub path this is stored on the job
+(`current_step`) and the View Jobs page auto-refreshes to show it moving.
 
 ---
 

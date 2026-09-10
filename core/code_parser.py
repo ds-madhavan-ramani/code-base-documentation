@@ -71,6 +71,17 @@ class CodeParser:
         ext = Path(filename).suffix
         return ext_map.get(ext, "txt")
 
+    def build_file_structures(self, code_files: Dict[str, str]) -> Dict[str, Dict]:
+        """Real, regex-extracted imports/functions/classes for every file.
+
+        Deterministic ground truth (not an LLM guess) that documentation
+        generation can cite directly instead of inventing function names.
+        """
+        return {
+            filename: self.extract_structure(content, self.get_language_from_extension(filename))
+            for filename, content in code_files.items()
+        }
+
     def create_file_tree(self, max_depth: int = 3) -> str:
         """Generate file tree structure."""
         tree_lines = []
