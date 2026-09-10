@@ -90,8 +90,11 @@ class BackgroundWorker:
                                                error=error, current_step=f"Failed: {error}")
                     return
             else:
-                # For uploads, code_files should be provided in job.source
-                code_files = json.loads(job.source)
+                # For uploads, job.source is a path to a sidecar JSON file
+                # (see JobQueue.create_job) holding the {filename: content}
+                # dict — kept out of the job's own status JSON so it isn't
+                # rewritten on every progress update.
+                code_files = json.loads(Path(job.source).read_text())
 
             # Step 2: Real, regex-extracted per-file structure (ground truth
             # the doc-writing model can cite instead of guessing).

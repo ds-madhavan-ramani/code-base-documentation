@@ -47,9 +47,9 @@ _LEADING_HEADING_RE = re.compile(r"^#{1,6}[ \t].*\n+", re.MULTILINE)
 
 def _strip_leading_heading(text: str) -> str:
     """Models routinely restate their own title as the first line despite
-    being told not to (e.g. a "# Systems View" right before the "## Systems
-    View" heading we already add), producing visibly duplicated headings.
-    Strip any heading line(s) at the very start of the text."""
+    being told not to (e.g. a "# Big Picture" right before the "## Big
+    Picture" heading we already add), producing visibly duplicated
+    headings. Strip any heading line(s) at the very start of the text."""
     stripped = text.lstrip()
     match = _LEADING_HEADING_RE.match(stripped)
     while match:
@@ -77,32 +77,33 @@ def _safe_generate(ollama_client, model: str, prompt: str, context_length: int, 
 
 DEV_DOCS_TIER1_SECTIONS: List[Dict[str, str]] = [
     {
-        "title": "Big Picture (Reductionist View)",
+        "title": "Big Picture",
         "template": """Project: {repo_name}
 
 Big-picture summary from analysis:
-{reductionist_view}
+{overview}
 
 Write the opening section of a developer guide, titled "Big Picture". In
 plain, simplified language explain WHAT this codebase does, HOW it works
-at the highest level, and WHY it is built this way. This is the
-reductionist view — strip away detail, don't list files or functions here.
+at the highest level, and WHY it is built this way. Strip away detail,
+don't list files or functions here.
 
 Format: Markdown, 2-4 short paragraphs. Do not add a heading, one will be added.""",
     },
     {
-        "title": "Systems View",
+        "title": "How It's Put Together",
         "template": """Project: {repo_name}
 
-Systems-level notes from analysis:
-{systems_view}
+Notes on how the pieces fit together, from analysis:
+{how_it_works}
 
 File tree:
 {file_tree}
 
-Write a "Systems View" section explaining how the pieces fit together to
-produce the big picture above — name real files/modules and trace how
-they connect and hand off to each other (calls, data, control flow).
+Write a "How It's Put Together" section explaining how the pieces fit
+together to produce the big picture above — name real files/modules and
+trace how they connect and hand off to each other (calls, data, control
+flow).
 
 Format: Markdown. A short bullet list of file/module -> responsibility,
 then 1-2 paragraphs on how they interact. Do not add a heading, one will be added.""",
@@ -168,7 +169,7 @@ USER_DOCS_HEAD_SECTIONS: List[Dict[str, str]] = [
     {
         "title": "Big Picture",
         "template": """Big-picture summary from analysis:
-{reductionist_view}
+{overview}
 
 Write a short "Big Picture" section for a non-technical user guide: plain
 language, what this does and why someone would use it.
@@ -223,8 +224,8 @@ def build_doc_context(analysis: dict, repo_url: Optional[str] = None) -> dict:
         "patterns": json.dumps(analysis.get("patterns", [])),
         "data_flow": analysis.get("data_flow", ""),
         "key_insights": analysis.get("key_insights", ""),
-        "reductionist_view": analysis.get("reductionist_view", ""),
-        "systems_view": analysis.get("systems_view", ""),
+        "overview": analysis.get("overview", ""),
+        "how_it_works": analysis.get("how_it_works", ""),
         "modules": ", ".join(analysis.get("key_modules", [])[:5]),
     }
 
@@ -288,7 +289,7 @@ def identify_features(ollama_client, model: str, context: dict,
 
     prompt = f"""Project: {context['repo_name']}
 Architecture: {context['architecture']}
-Systems view: {context['systems_view']}
+How it works: {context['how_it_works']}
 
 Real files and the real functions/classes found in them:
 {file_summary}

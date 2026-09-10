@@ -53,8 +53,8 @@ so the model explains code it's genuinely shown rather than inventing
 plausible-sounding function names or repo URLs. See README.md's
 "Documentation Generation (Grounded, Section-by-Section)" section for the
 full flow diagram.
-- **Dev Docs:** `DEV_DOCS_TIER1_SECTIONS` (Big Picture, Systems View,
-  Architecture & Patterns) → `build_feature_map_section()` (1 call) →
+- **Dev Docs:** `DEV_DOCS_TIER1_SECTIONS` (Big Picture, How It's Put
+  Together, Architecture & Patterns) → `build_feature_map_section()` (1 call) →
   `build_file_walkthrough_sections()` (1 call per significant file, capped
   at `DEV_DOCS_MAX_FILES`) → `DEV_DOCS_TAIL_SECTIONS` (Configuration &
   Workflow, Common Tasks & Troubleshooting)
