@@ -352,28 +352,37 @@ for job in jobs:
 
 ## 📚 Documentation
 
-### Quick References
+The repo carries a lot of `.md` files from its build history. This is every
+one of them, what it's actually for, and whether it reflects how the app
+works **today** (fully local — Ollama only, no cloud API keys) or is kept
+around as a record of how it got here.
 
-| Document | Purpose | Read Time |
-|----------|---------|-----------|
-| [**QUICK_START_ODYSSEUS.md**](./QUICK_START_ODYSSEUS.md) | User-friendly guide with examples | 10 min |
-| [**ODYSSEUS_HARNESS_INTEGRATION.md**](./ODYSSEUS_HARNESS_INTEGRATION.md) | Technical deep-dive & architecture | 20 min |
-| [**ODYSSEUS_IMPLEMENTATION_SUMMARY.md**](./ODYSSEUS_IMPLEMENTATION_SUMMARY.md) | Executive overview | 10 min |
-| [**IMPLEMENTATION_CHECKLIST.md**](./IMPLEMENTATION_CHECKLIST.md) | Verification & features list | 5 min |
-| [**AGENTS.md**](./AGENTS.md) | System agents & workflows | 15 min |
-| [**CLAUDE_CODE.md**](./CLAUDE_CODE.md) | Setup for development | 10 min |
+### ✅ Current — reflects today's local-Ollama setup
 
-### Document Structure
+| Document | Purpose |
+|----------|---------|
+| [**README.md**](./README.md) | This file — problem, solution, install, usage, troubleshooting |
+| [**ODYSSEUS_OLLAMA_SETUP.md**](./ODYSSEUS_OLLAMA_SETUP.md) | How Odysseus Harness is pointed at local Ollama models instead of a cloud LLM — the setup this app actually runs on |
+| [**AGENTS.md**](./AGENTS.md) | Internal reference for the app's processing stages (code parser, Odysseus analysis, doc generation) — what triggers each and what it outputs |
+| [**QUICK_START_ODYSSEUS.md**](./QUICK_START_ODYSSEUS.md) | Walkthrough of the background job-queue workflow — submitting a GitHub repo and tracking it under View Jobs |
 
-```
-📁 docs/
-├── QUICK_START_ODYSSEUS.md              ← Start here!
-├── ODYSSEUS_HARNESS_INTEGRATION.md      ← Technical details
-├── ODYSSEUS_IMPLEMENTATION_SUMMARY.md   ← Overview
-├── IMPLEMENTATION_CHECKLIST.md          ← Verification
-├── AGENTS.md                            ← Architecture
-└── CLAUDE_CODE.md                       ← Development setup
-```
+### 🕰️ Historical — earlier build stages, superseded
+
+These describe intermediate versions of the app (calling Odysseus as an HTTP
+API, or requiring an Anthropic API key) before it was rebuilt to run
+entirely offline through Ollama. Kept for project history — don't follow
+these for setup.
+
+| Document | Purpose |
+|----------|---------|
+| [**MIGRATION_TO_DIRECT_ODYSSEUS.md**](./MIGRATION_TO_DIRECT_ODYSSEUS.md) | Records the switch from calling Odysseus as an HTTP API to using it as a direct Python library |
+| [**ODYSSEUS_SETUP_GUIDE.md**](./ODYSSEUS_SETUP_GUIDE.md) | Setup guide for that direct-library-but-still-cloud-API stage; superseded by ODYSSEUS_OLLAMA_SETUP.md |
+| [**QUICK_START_ODYSSEUS_DIRECT.md**](./QUICK_START_ODYSSEUS_DIRECT.md) | 5-minute setup assuming an Anthropic API key — no longer applicable now that the app is 100% local |
+| [**ODYSSEUS_HARNESS_INTEGRATION.md**](./ODYSSEUS_HARNESS_INTEGRATION.md) | Technical guide for the original HTTP-API-based Odysseus integration (`core/odysseus_harness.py`), since replaced by `core/odysseus_analysis_agent.py` |
+| [**ODYSSEUS_IMPLEMENTATION_SUMMARY.md**](./ODYSSEUS_IMPLEMENTATION_SUMMARY.md) | Executive summary of that same original HTTP-API background-processing build |
+| [**IMPLEMENTATION_CHECKLIST.md**](./IMPLEMENTATION_CHECKLIST.md) | Sign-off checklist for the original job-queue + background-worker feature build |
+| [**CLAUDE_CODE.md**](./CLAUDE_CODE.md) | A dev task list from an earlier session ("fix 2 files to pass integration tests") |
+| [**PROJECT_SUMMARY_FOR_CLAUDE_CODE.md**](./PROJECT_SUMMARY_FOR_CLAUDE_CODE.md) | Status snapshot from that same "95% complete" handoff point |
 
 ---
 
