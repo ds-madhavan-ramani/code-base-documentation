@@ -15,16 +15,19 @@ class JobStatus(str, Enum):
     FAILED = "failed"
 
 class Job:
-    def __init__(self, job_id: str, repo_name: str, source_type: str, source: str):
+    def __init__(self, job_id: str, repo_name: str, source_type: str, source: str,
+                 doc_type: str = "both"):
         self.job_id = job_id
         self.repo_name = repo_name
         self.source_type = source_type  # "upload", "github"
         self.source = source
+        self.doc_type = doc_type  # "both", "dev", or "user"
         self.status = JobStatus.PENDING
         self.created_at = datetime.now().isoformat()
         self.started_at = None
         self.completed_at = None
         self.progress = 0
+        self.current_step = "Queued"
         self.analysis = {}
         self.error = None
         self.results = {}
@@ -35,11 +38,13 @@ class Job:
             "repo_name": self.repo_name,
             "source_type": self.source_type,
             "source": self.source,
+            "doc_type": self.doc_type,
             "status": self.status.value,
             "created_at": self.created_at,
             "started_at": self.started_at,
             "completed_at": self.completed_at,
             "progress": self.progress,
+            "current_step": self.current_step,
             "analysis": self.analysis,
             "error": self.error,
             "results": self.results
@@ -52,10 +57,11 @@ class JobQueue:
         self.jobs: Dict[str, Job] = {}
         self._load_jobs()
 
-    def create_job(self, repo_name: str, source_type: str, source: str) -> Job:
+    def create_job(self, repo_name: str, source_type: str, source: str,
+                   doc_type: str = "both") -> Job:
         """Create a new analysis job."""
         job_id = str(uuid.uuid4())[:8]
-        job = Job(job_id, repo_name, source_type, source)
+        job = Job(job_id, repo_name, source_type, source, doc_type=doc_type)
         self.jobs[job_id] = job
         self._save_job(job)
         logger.info(f"Created job {job_id} for {repo_name}")
@@ -66,7 +72,7 @@ class JobQueue:
         return self.jobs.get(job_id)
 
     def update_job(self, job_id: str, status: JobStatus = None, progress: int = None,
-                   analysis: Dict = None, error: str = None):
+                   analysis: Dict = None, error: str = None, current_step: str = None):
         """Update job status and progress."""
         job = self.jobs.get(job_id)
         if not job:
@@ -88,6 +94,9 @@ class JobQueue:
         if error:
             job.error = error
 
+        if current_step is not None:
+            job.current_step = current_step
+
         self._save_job(job)
 
     def list_jobs(self, repo_name: str = None) -> List[Job]:
@@ -108,12 +117,14 @@ class JobQueue:
             try:
                 data = json.loads(job_file.read_text())
                 job = Job(data["job_id"], data["repo_name"],
-                         data["source_type"], data["source"])
+                         data["source_type"], data["source"],
+                         doc_type=data.get("doc_type", "both"))
                 job.status = JobStatus(data["status"])
                 job.created_at = data["created_at"]
                 job.started_at = data.get("started_at")
                 job.completed_at = data.get("completed_at")
                 job.progress = data.get("progress", 0)
+                job.current_step = data.get("current_step", "")
                 job.analysis = data.get("analysis", {})
                 job.error = data.get("error")
                 job.results = data.get("results", {})

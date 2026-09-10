@@ -123,6 +123,50 @@ Your Codebase
 | **Templates** | Jinja2 | Dynamic prompt generation |
 | **Version Control** | Git | Repository management |
 
+### 📝 Documentation Generation (Section-by-Section)
+
+A small local model (e.g. `qwen2.5-coder:7b`) tends to run out of depth if
+asked to write a whole multi-section document in one completion. So instead
+of one prompt per document, `utils/prompts.py` breaks each document into
+independent sections — 7 for Developer Docs, 4 for the User Guide — and
+calls Ollama once per section, then concatenates the results:
+
+```mermaid
+flowchart TD
+    A["Analysis dict<br/>architecture, key_modules, dependencies,<br/>reductionist_view, systems_view, ..."] --> B["build_doc_context()"]
+    B --> C{"build_sectioned_doc()"}
+    C --> S1["Section: Big Picture"]
+    C --> S2["Section: Systems View"]
+    C --> S3["Section: Architecture & Patterns"]
+    C --> S4["Section: ...more sections"]
+    S1 --> G1["ollama.generate()"]
+    S2 --> G2["ollama.generate()"]
+    S3 --> G3["ollama.generate()"]
+    S4 --> G4["ollama.generate()"]
+    G1 --> D["Concatenate as Markdown<br/>## <section title> per block"]
+    G2 --> D
+    G3 --> D
+    G4 --> D
+    D --> E["DEVELOPER_DOCS.md / USER_GUIDE.md"]
+```
+
+Each section gets the model's full attention and output budget instead of
+sharing it across the whole document, so detail and completeness stop
+being capped by how much a smaller model can hold together in one
+completion. The trade-off: more Ollama calls per document (7-11 instead of
+1), so generation takes longer — most noticeable on the synchronous Local
+Upload path, less so on the backgrounded GitHub job path.
+
+Both flows also take a **Document Type** choice (Both / Developer Docs
+Only / End-User Guide Only) up front, so only the sections for the
+requested type(s) run — skipping the User Guide's 4 sections when only
+Developer Docs were asked for, for example. And because
+`build_sectioned_doc()` reports each section as it starts, both flows
+surface a live one-line status ("Developer docs — section 3/7: Architecture
+& Design Patterns") instead of a silent progress bar — on the GitHub path
+this is stored on the job (`current_step`) and the View Jobs page
+auto-refreshes to show it moving.
+
 ---
 
 ## 🎨 Features
@@ -271,10 +315,11 @@ streamlit run app/main.py
    - Full: https://github.com/pallets/flask
    - Short: pallets/flask
 3. Enter: Project name (e.g., Flask)
-4. Click: "📤 Submit for Analysis"
-5. Get: Job ID (e.g., abc12345)
-6. Go to: "📋 View Jobs" to track progress
-7. Download: Results when progress reaches 100%
+4. Choose: Document Type — Both / Developer Docs Only / End-User Guide Only
+5. Click: "📤 Submit for Analysis"
+6. Get: Job ID (e.g., abc12345)
+7. Go to: "📋 View Jobs" to track progress
+8. Download: Results when progress reaches 100%
 ```
 
 ### Mode 3: View & Manage Jobs
@@ -285,10 +330,17 @@ streamlit run app/main.py
 1. Select: "📋 View Jobs"
 2. View: All submitted analyses with status
 3. Expand: Individual jobs to see details
-4. Monitor: Real-time progress bars (0-100%)
-5. Download: Generated documentation when complete
+4. Monitor: A live one-line status (e.g. "Developer docs — section 3/7:
+   Architecture & Design Patterns") plus a real-time progress bar — the
+   page auto-refreshes every ~2s while a job is pending/running
+5. Download: Every file actually saved for the project (only the
+   document type you chose at submission gets generated)
 6. Error: Review error messages if job failed
 ```
+
+Generated files are always persisted to disk under
+`<OUTPUT_DIR>/<project name>/` (default `./data/outputs/<project name>/`) —
+the View Jobs page shows the exact path for each completed job.
 
 ---
 
@@ -352,28 +404,37 @@ for job in jobs:
 
 ## 📚 Documentation
 
-### Quick References
+The repo carries a lot of `.md` files from its build history. This is every
+one of them, what it's actually for, and whether it reflects how the app
+works **today** (fully local — Ollama only, no cloud API keys) or is kept
+around as a record of how it got here.
 
-| Document | Purpose | Read Time |
-|----------|---------|-----------|
-| [**QUICK_START_ODYSSEUS.md**](./QUICK_START_ODYSSEUS.md) | User-friendly guide with examples | 10 min |
-| [**ODYSSEUS_HARNESS_INTEGRATION.md**](./ODYSSEUS_HARNESS_INTEGRATION.md) | Technical deep-dive & architecture | 20 min |
-| [**ODYSSEUS_IMPLEMENTATION_SUMMARY.md**](./ODYSSEUS_IMPLEMENTATION_SUMMARY.md) | Executive overview | 10 min |
-| [**IMPLEMENTATION_CHECKLIST.md**](./IMPLEMENTATION_CHECKLIST.md) | Verification & features list | 5 min |
-| [**AGENTS.md**](./AGENTS.md) | System agents & workflows | 15 min |
-| [**CLAUDE_CODE.md**](./CLAUDE_CODE.md) | Setup for development | 10 min |
+### ✅ Current — reflects today's local-Ollama setup
 
-### Document Structure
+| Document | Purpose |
+|----------|---------|
+| [**README.md**](./README.md) | This file — problem, solution, install, usage, troubleshooting |
+| [**ODYSSEUS_OLLAMA_SETUP.md**](./ODYSSEUS_OLLAMA_SETUP.md) | How Odysseus Harness is pointed at local Ollama models instead of a cloud LLM — the setup this app actually runs on |
+| [**AGENTS.md**](./AGENTS.md) | Internal reference for the app's processing stages (code parser, Odysseus analysis, doc generation) — what triggers each and what it outputs |
+| [**QUICK_START_ODYSSEUS.md**](./QUICK_START_ODYSSEUS.md) | Walkthrough of the background job-queue workflow — submitting a GitHub repo and tracking it under View Jobs |
 
-```
-📁 docs/
-├── QUICK_START_ODYSSEUS.md              ← Start here!
-├── ODYSSEUS_HARNESS_INTEGRATION.md      ← Technical details
-├── ODYSSEUS_IMPLEMENTATION_SUMMARY.md   ← Overview
-├── IMPLEMENTATION_CHECKLIST.md          ← Verification
-├── AGENTS.md                            ← Architecture
-└── CLAUDE_CODE.md                       ← Development setup
-```
+### 🕰️ Historical — earlier build stages, superseded
+
+These describe intermediate versions of the app (calling Odysseus as an HTTP
+API, or requiring an Anthropic API key) before it was rebuilt to run
+entirely offline through Ollama. Kept for project history — don't follow
+these for setup.
+
+| Document | Purpose |
+|----------|---------|
+| [**MIGRATION_TO_DIRECT_ODYSSEUS.md**](./MIGRATION_TO_DIRECT_ODYSSEUS.md) | Records the switch from calling Odysseus as an HTTP API to using it as a direct Python library |
+| [**ODYSSEUS_SETUP_GUIDE.md**](./ODYSSEUS_SETUP_GUIDE.md) | Setup guide for that direct-library-but-still-cloud-API stage; superseded by ODYSSEUS_OLLAMA_SETUP.md |
+| [**QUICK_START_ODYSSEUS_DIRECT.md**](./QUICK_START_ODYSSEUS_DIRECT.md) | 5-minute setup assuming an Anthropic API key — no longer applicable now that the app is 100% local |
+| [**ODYSSEUS_HARNESS_INTEGRATION.md**](./ODYSSEUS_HARNESS_INTEGRATION.md) | Technical guide for the original HTTP-API-based Odysseus integration (`core/odysseus_harness.py`), since replaced by `core/odysseus_analysis_agent.py` |
+| [**ODYSSEUS_IMPLEMENTATION_SUMMARY.md**](./ODYSSEUS_IMPLEMENTATION_SUMMARY.md) | Executive summary of that same original HTTP-API background-processing build |
+| [**IMPLEMENTATION_CHECKLIST.md**](./IMPLEMENTATION_CHECKLIST.md) | Sign-off checklist for the original job-queue + background-worker feature build |
+| [**CLAUDE_CODE.md**](./CLAUDE_CODE.md) | A dev task list from an earlier session ("fix 2 files to pass integration tests") |
+| [**PROJECT_SUMMARY_FOR_CLAUDE_CODE.md**](./PROJECT_SUMMARY_FOR_CLAUDE_CODE.md) | Status snapshot from that same "95% complete" handoff point |
 
 ---
 
