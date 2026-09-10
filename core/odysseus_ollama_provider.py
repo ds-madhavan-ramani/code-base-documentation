@@ -13,7 +13,7 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 # Default to Qwen (strong reasoning capabilities)
-DEFAULT_MODEL = os.environ.get("ODYSSEUS_MODEL", "qwen2.5-coder:32b")
+DEFAULT_MODEL = os.environ.get("ODYSSEUS_MODEL", "qwen3:32b")
 OLLAMA_URL = os.environ.get("OLLAMA_API_URL", "http://localhost:11434")
 
 

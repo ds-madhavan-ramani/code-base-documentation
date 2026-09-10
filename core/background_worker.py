@@ -137,7 +137,9 @@ class BackgroundWorker:
             prompt = PROMPTS.get("dev_docs", "").format(
                 file_tree=analysis.get("file_tree", "N/A"),
                 code_structure=json.dumps(analysis.get("key_modules", []))[:2000],
-                architecture=analysis.get("architecture", "")
+                architecture=analysis.get("architecture", ""),
+                reductionist_view=analysis.get("reductionist_view", "N/A"),
+                systems_view=analysis.get("systems_view", "N/A")
             )
 
             dev_docs = self.ollama.generate(
@@ -154,7 +156,8 @@ class BackgroundWorker:
         """Generate user guide from analysis."""
         try:
             prompt = PROMPTS.get("user_docs", "").format(
-                modules=", ".join(analysis.get("key_modules", [])[:5])
+                modules=", ".join(analysis.get("key_modules", [])[:5]),
+                reductionist_view=analysis.get("reductionist_view", "N/A")
             )
 
             user_docs = self.ollama.generate(
