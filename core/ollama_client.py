@@ -1,3 +1,4 @@
+import os
 import requests
 import logging
 from typing import Optional
@@ -5,10 +6,15 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 class OllamaClient:
-    def __init__(self, base_url: str = "http://localhost:11434"):
+    def __init__(self, base_url: str = "http://localhost:11434", fallback_model: str = None):
         self.base_url = base_url
         self.session = requests.Session()
         self.timeout = 300
+        # Used only if a generate() call times out. Configurable rather than
+        # hardcoded so it actually matches whatever model you've configured
+        # (OLLAMA_DEV_MODEL/OLLAMA_USER_MODEL) instead of assuming one
+        # specific model name is always pulled.
+        self.fallback_model = fallback_model or os.environ.get("OLLAMA_FALLBACK_MODEL", "qwen2.5-coder:7b")
 
     def health_check(self) -> bool:
         """Verify Ollama is running."""
@@ -54,9 +60,12 @@ class OllamaClient:
             resp.raise_for_status()
             return resp.json().get("response", "")
         except requests.Timeout:
-            logger.warning(f"Timeout on {model}, retrying with fallback...")
-            if model != "qwen2.5-coder:7b":
-                return self.generate("qwen2.5-coder:7b", prompt)
+            logger.warning(f"Timeout on {model}, retrying with fallback {self.fallback_model}...")
+            if model != self.fallback_model:
+                return self.generate(
+                    self.fallback_model, prompt,
+                    temperature=temperature, context_length=context_length, top_p=top_p
+                )
             raise
         except Exception as e:
             logger.error(f"Ollama error: {e}")

@@ -270,6 +270,11 @@ elif input_mode == "🐙 GitHub Repository":
     if submitted:
         if not repo_url or not repo_name:
             st.error("Please fill in all fields")
+        elif not GitHubClient.is_github_url(repo_url):
+            st.error(
+                "That doesn't look like a GitHub reference — use a full URL "
+                "(https://github.com/user/repo) or the 'user/repo' shorthand."
+            )
         else:
             # Create job
             job = job_queue.create_job(

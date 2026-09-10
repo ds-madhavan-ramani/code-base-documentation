@@ -2,7 +2,7 @@ import logging
 import subprocess
 import shutil
 from pathlib import Path
-from typing import Optional, Dict, Tuple
+from typing import Optional, Tuple
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
@@ -77,37 +77,6 @@ class GitHubClient:
             logger.error(error)
             return None, error
 
-    def get_repo_info(self, repo_path: Path) -> Dict:
-        """Extract metadata about repository."""
-        try:
-            repo_name = repo_path.name
-
-            # Get git info
-            git_cmd = ["git", "-C", str(repo_path), "log", "-1", "--format=%ci"]
-            result = subprocess.run(git_cmd, capture_output=True, text=True)
-            last_commit = result.stdout.strip() if result.returncode == 0 else "unknown"
-
-            # Count commits
-            git_cmd = ["git", "-C", str(repo_path), "rev-list", "--count", "HEAD"]
-            result = subprocess.run(git_cmd, capture_output=True, text=True)
-            commit_count = result.stdout.strip() if result.returncode == 0 else "0"
-
-            # Get branches
-            git_cmd = ["git", "-C", str(repo_path), "branch", "-r"]
-            result = subprocess.run(git_cmd, capture_output=True, text=True)
-            branches = len(result.stdout.strip().split("\n")) if result.returncode == 0 else 0
-
-            return {
-                "name": repo_name,
-                "last_commit": last_commit,
-                "commit_count": commit_count,
-                "branches": branches,
-                "path": str(repo_path)
-            }
-        except Exception as e:
-            logger.error(f"Failed to get repo info: {e}")
-            return {"name": repo_path.name, "error": str(e)}
-
     def cleanup_cache(self, max_age_days: int = 7):
         """Remove old cached repositories."""
         import time
@@ -121,8 +90,11 @@ class GitHubClient:
                     logger.info(f"Cleaning up old cache: {repo_dir.name}")
                     shutil.rmtree(repo_dir, ignore_errors=True)
 
-    def is_github_url(self, url: str) -> bool:
-        """Check if URL is a GitHub repository."""
+    @staticmethod
+    def is_github_url(url: str) -> bool:
+        """Check if a string looks like a GitHub reference (full URL or
+        'user/repo' shorthand), so a bad submission can be rejected before
+        creating a job rather than failing deep inside the background worker."""
         return "github.com" in url.lower() or (
             "/" in url and not url.startswith("http") and "." not in url.split("/")[0]
         )

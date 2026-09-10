@@ -38,6 +38,7 @@ class BackgroundWorker:
         self.ollama = ollama
         self.doc_gen = doc_gen
         self.github = GitHubClient()
+        self.github.cleanup_cache()  # advertised as "Auto-cleanup of old caches" but was never called
         self.dev_model = dev_model
         self.user_model = user_model
         self.is_running = False

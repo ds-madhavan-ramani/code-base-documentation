@@ -546,14 +546,14 @@ codebase-docs/
 ├── app/
 │   └── main.py                    # Streamlit web interface
 ├── core/
-│   ├── job_queue.py               # Job management (NEW)
-│   ├── odysseus_harness.py        # Analysis wrapper (NEW)
-│   ├── github_client.py           # GitHub integration (NEW)
-│   ├── background_worker.py       # Async processing (NEW)
+│   ├── job_queue.py               # Job management
+│   ├── odysseus_analysis_agent.py # Odysseus Harness wrapper (direct library, not an API)
+│   ├── odysseus_ollama_provider.py# Redirects Odysseus's model calls to local Ollama
+│   ├── github_client.py           # GitHub integration
+│   ├── background_worker.py       # Async processing
 │   ├── code_parser.py             # Code extraction
-│   ├── doc_generator.py           # MD → HTML conversion
-│   ├── ollama_client.py           # LLM interface
-│   └── odysseus_client.py         # API client
+│   ├── doc_generator.py           # MD → HTML conversion, save/list/delete output files
+│   └── ollama_client.py           # LLM interface
 ├── utils/
 │   └── prompts.py                 # LLM prompts
 ├── tests/
