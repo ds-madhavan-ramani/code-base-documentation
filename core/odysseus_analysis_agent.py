@@ -5,6 +5,7 @@ keeping everything local and offline.
 """
 
 import logging
+import os
 import tempfile
 import json
 from pathlib import Path
@@ -32,16 +33,29 @@ provider_module.DEFAULT_MODEL = DEFAULT_MODEL
 class OdysseusAnalysisAgent:
     """Uses Odysseus Harness with Ollama models for deep code analysis."""
 
-    def __init__(self, model: str = None):
+    def __init__(self, model: str = None, max_turns: int = None, budget_tokens: int = None):
         """
         Initialize Odysseus Analysis Agent with Ollama backend.
 
         Args:
             model: Ollama model name (e.g., "qwen2.5-coder:32b")
                   Defaults to ODYSSEUS_MODEL env var or qwen2.5-coder:32b
+            max_turns: Cap on the agentic loop's turns. Defaults to
+                  ODYSSEUS_MAX_TURNS env var, or 100 — higher means the
+                  Harness can read/grep more of the repo before answering,
+                  at the cost of a much longer analysis phase.
+            budget_tokens: Conversation token budget before old turns get
+                  compacted into a summary. Defaults to
+                  ODYSSEUS_BUDGET_TOKENS env var, or 300_000 — raise this
+                  alongside max_turns so a longer conversation doesn't get
+                  summarized away before it's used. Also needs Ollama's own
+                  num_ctx (see odysseus_ollama_provider.NUM_CTX) to be large
+                  enough, or individual calls get truncated regardless.
         """
         self.model = model or DEFAULT_MODEL
         self.ollama_url = OLLAMA_URL
+        self.max_turns = max_turns or int(os.environ.get("ODYSSEUS_MAX_TURNS", "100"))
+        self.budget_tokens = budget_tokens or int(os.environ.get("ODYSSEUS_BUDGET_TOKENS", "300000"))
         self._verify_ollama()
 
     def _verify_ollama(self):
@@ -92,8 +106,8 @@ class OdysseusAnalysisAgent:
                 harness = Harness(
                     workdir=str(tmpdir_path),
                     model=self.model,
-                    budget_tokens=100_000,  # Conservative for local models
-                    max_turns=20,
+                    budget_tokens=self.budget_tokens,
+                    max_turns=self.max_turns,
                 )
 
                 # Run analysis
@@ -117,7 +131,7 @@ class OdysseusAnalysisAgent:
         """Build analysis prompt optimized for open-source models."""
         file_summary = "\n".join(
             f"  • {name} ({len(content)} chars)"
-            for name, content in list(code_files.items())[:15]
+            for name, content in list(code_files.items())[:40]
         )
 
         return f"""Analyze this codebase and provide structured insights.
@@ -127,6 +141,13 @@ FILES: {len(code_files)} total
 
 Sample files:
 {file_summary}
+
+You have read/grep/ls tools and up to {self.max_turns} turns available in
+this workdir — use them. Before answering, actually open and read the
+files that matter most (entry points, the largest/most central modules,
+anything imported everywhere else), and grep for patterns across the repo
+rather than guessing from filenames alone. Spend real turns exploring; a
+deeper read produces a better analysis than a fast guess.
 
 TASK: Provide a deep analysis with these sections:
 

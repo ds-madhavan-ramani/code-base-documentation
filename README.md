@@ -370,6 +370,11 @@ streamlit run app/main.py
 5. Download: Every file actually saved for the project (only the
    document type you chose at submission gets generated)
 6. Error: Review error messages if job failed
+7. Delete: Check "🗑️ Select" on one or more jobs, tick the confirmation
+   checkbox, then "Delete Selected" — permanently removes the job
+   record AND that project's generated output files. Output is stored
+   per project name, not per job, so deleting removes all runs that
+   share the same project name.
 ```
 
 Generated files are always persisted to disk under
@@ -499,6 +504,21 @@ these for setup.
 OLLAMA_API_URL=http://localhost:11434
 ODYSSEUS_API_URL=http://localhost:8000
 
+# Models
+ODYSSEUS_MODEL=qwen3:32b                # Drives the Harness's agentic analysis
+OLLAMA_DEV_MODEL=qwen2.5-coder:7b       # Writes Developer Docs sections
+OLLAMA_USER_MODEL=qwen2.5-coder:7b      # Writes User Guide sections
+
+# Odysseus Harness depth (all optional - higher = slower, more detailed)
+ODYSSEUS_MAX_TURNS=100                  # Agentic loop turn cap (default: 100)
+ODYSSEUS_BUDGET_TOKENS=300000           # Conversation budget before old turns
+                                        # get compacted into a summary (default: 300000)
+ODYSSEUS_NUM_CTX=32768                  # Ollama's own per-call context window —
+                                        # raising max_turns/budget_tokens alone does
+                                        # nothing if this stays at Ollama's tiny
+                                        # default; raise together (default: 32768)
+ODYSSEUS_TIMEOUT=900                    # Per-call timeout in seconds (default: 900)
+
 # Storage Locations
 OUTPUT_DIR=./data/outputs              # Generated docs
 UPLOAD_DIR=./data/uploads              # User uploads
@@ -509,6 +529,15 @@ JOBS_DIR=./data/jobs                   # Job queue storage
 DEBUG=true
 LOG_LEVEL=INFO
 ```
+
+Raising `ODYSSEUS_MAX_TURNS` without also raising `ODYSSEUS_NUM_CTX` mostly
+just makes the run slower without adding detail — Ollama would keep
+truncating each individual call at its own (smaller) context window
+regardless of how much conversation history the Harness tries to send it.
+Raising `ODYSSEUS_NUM_CTX` also raises the model's KV-cache memory use —
+a 32B model at 32768 context needs meaningfully more RAM/VRAM than at the
+Ollama default, so if you hit memory pressure, lower it before lowering
+`ODYSSEUS_MAX_TURNS`.
 
 ### Directory Structure
 
