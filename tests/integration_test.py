@@ -1,13 +1,12 @@
 import sys
 from pathlib import Path
 from dotenv import load_dotenv
-import os
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 load_dotenv()
 
 from core.ollama_client import OllamaClient
-from core.odysseus_client import OdysseusClient
+from core.odysseus_ollama_provider import health_check as odysseus_provider_health_check
 from core.code_parser import CodeParser
 from core.doc_generator import DocumentationGenerator
 
@@ -23,13 +22,13 @@ def test_pipeline():
         for model in models[:3]:
             print(f"     - {model}")
     
-    print("\n2️⃣  Testing Odysseus...")
-    odysseus_url = os.getenv("ODYSSEUS_API_URL", "http://localhost:8000")
-    odysseus = OdysseusClient(odysseus_url)
-    if odysseus.health_check():
-        print("   ✓ Odysseus healthy")
+    print("\n2️⃣  Testing Odysseus (via the local Ollama provider)...")
+    # Odysseus Harness runs in-process (core/odysseus_analysis_agent.py) and
+    # is only as healthy as the Ollama server it's been redirected to.
+    if odysseus_provider_health_check():
+        print("   ✓ Odysseus's Ollama backend is healthy")
     else:
-        print(f"   ⚠️  Odysseus not responding at {odysseus_url} (fallback mode OK)")
+        print("   ⚠️  Ollama not responding — Odysseus analysis will use the lightweight fallback")
     
     print("\n3️⃣  Testing Code Parser...")
     sample_py = """import os

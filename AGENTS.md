@@ -252,16 +252,16 @@ ollama = OllamaClient("http://localhost:11434")
 response = ollama.generate(
     model="qwen3:8b",
     prompt="Explain this code...",
-    task="user_guide"
+    context_length=8192
 )
 ```
 
 ### Analyze Code
 ```python
-from core.odysseus_client import OdysseusClient
+from core.odysseus_analysis_agent import OdysseusAnalysisAgent
 
-odysseus = OdysseusClient("http://localhost:8000")
-analysis = odysseus.analyze_codebase(code_files)
+odysseus = OdysseusAnalysisAgent(model="qwen3:32b")
+analysis = odysseus.analyze_deep(code_files, repo_name="my_project")
 ```
 
 ### Generate Documentation

@@ -1,5 +1,6 @@
 import json
 import logging
+import threading
 import uuid
 from pathlib import Path
 from datetime import datetime
@@ -55,6 +56,13 @@ class JobQueue:
         self.storage_dir = Path(storage_dir)
         self.storage_dir.mkdir(parents=True, exist_ok=True)
         self.jobs: Dict[str, Job] = {}
+        # Guards self.jobs: the background worker thread now mutates it (via
+        # update_job) once per generated section/file — far more often than
+        # before — while the Streamlit UI thread concurrently reads it via
+        # list_jobs()'s auto-refresh. Without this, a create_job/delete_job
+        # resizing the dict mid-iteration in the other thread could raise
+        # "dictionary changed size during iteration".
+        self._lock = threading.Lock()
         self._load_jobs()
 
     def create_job(self, repo_name: str, source_type: str, source: str,
@@ -62,47 +70,51 @@ class JobQueue:
         """Create a new analysis job."""
         job_id = str(uuid.uuid4())[:8]
         job = Job(job_id, repo_name, source_type, source, doc_type=doc_type)
-        self.jobs[job_id] = job
+        with self._lock:
+            self.jobs[job_id] = job
         self._save_job(job)
         logger.info(f"Created job {job_id} for {repo_name}")
         return job
 
     def get_job(self, job_id: str) -> Optional[Job]:
         """Retrieve job by ID."""
-        return self.jobs.get(job_id)
+        with self._lock:
+            return self.jobs.get(job_id)
 
     def update_job(self, job_id: str, status: JobStatus = None, progress: int = None,
                    analysis: Dict = None, error: str = None, current_step: str = None):
         """Update job status and progress."""
-        job = self.jobs.get(job_id)
-        if not job:
-            return
+        with self._lock:
+            job = self.jobs.get(job_id)
+            if not job:
+                return
 
-        if status:
-            job.status = status
-            if status == JobStatus.RUNNING and not job.started_at:
-                job.started_at = datetime.now().isoformat()
-            elif status == JobStatus.COMPLETED:
-                job.completed_at = datetime.now().isoformat()
+            if status:
+                job.status = status
+                if status == JobStatus.RUNNING and not job.started_at:
+                    job.started_at = datetime.now().isoformat()
+                elif status == JobStatus.COMPLETED:
+                    job.completed_at = datetime.now().isoformat()
 
-        if progress is not None:
-            job.progress = progress
+            if progress is not None:
+                job.progress = progress
 
-        if analysis:
-            job.analysis = analysis
+            if analysis:
+                job.analysis = analysis
 
-        if error:
-            job.error = error
+            if error:
+                job.error = error
 
-        if current_step is not None:
-            job.current_step = current_step
+            if current_step is not None:
+                job.current_step = current_step
 
         self._save_job(job)
 
     def delete_job(self, job_id: str) -> bool:
         """Remove a job record and its persisted JSON file. Does not touch
         any generated output files — see DocumentationGenerator.delete_output."""
-        job = self.jobs.pop(job_id, None)
+        with self._lock:
+            job = self.jobs.pop(job_id, None)
         if job is None:
             return False
         job_file = self.storage_dir / f"{job_id}.json"
@@ -113,7 +125,8 @@ class JobQueue:
 
     def list_jobs(self, repo_name: str = None) -> List[Job]:
         """List all jobs, optionally filtered by repo."""
-        jobs = list(self.jobs.values())
+        with self._lock:
+            jobs = list(self.jobs.values())
         if repo_name:
             jobs = [j for j in jobs if j.repo_name == repo_name]
         return sorted(jobs, key=lambda j: j.created_at, reverse=True)
