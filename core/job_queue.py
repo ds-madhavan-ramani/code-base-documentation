@@ -52,9 +52,11 @@ class Job:
         }
 
 class JobQueue:
-    def __init__(self, storage_dir: str = "./data/jobs"):
+    def __init__(self, storage_dir: str = "./data/jobs", upload_dir: str = "./data/uploads"):
         self.storage_dir = Path(storage_dir)
         self.storage_dir.mkdir(parents=True, exist_ok=True)
+        self.upload_dir = Path(upload_dir)
+        self.upload_dir.mkdir(parents=True, exist_ok=True)
         self.jobs: Dict[str, Job] = {}
         # Guards self.jobs: the background worker thread now mutates it (via
         # update_job) once per generated section/file — far more often than
@@ -65,11 +67,26 @@ class JobQueue:
         self._lock = threading.Lock()
         self._load_jobs()
 
-    def create_job(self, repo_name: str, source_type: str, source: str,
+    def create_job(self, repo_name: str, source_type: str, source,
                    doc_type: str = "both") -> Job:
-        """Create a new analysis job."""
+        """Create a new analysis job.
+
+        `source` is a GitHub URL string for source_type="github", or the
+        raw {filename: content} dict for source_type="upload" — the latter
+        gets written to a sidecar file under upload_dir rather than
+        embedded in the job's own status JSON (which update_job() rewrites
+        on every progress tick — now once per generated section/file, so
+        keeping a large source blob there would mean rewriting it dozens
+        of times per job). job.source becomes that sidecar file's path.
+        """
         job_id = str(uuid.uuid4())[:8]
-        job = Job(job_id, repo_name, source_type, source, doc_type=doc_type)
+        if source_type == "upload":
+            sidecar_path = self.upload_dir / f"{job_id}_source.json"
+            sidecar_path.write_text(json.dumps(source))
+            source_ref = str(sidecar_path)
+        else:
+            source_ref = source
+        job = Job(job_id, repo_name, source_type, source_ref, doc_type=doc_type)
         with self._lock:
             self.jobs[job_id] = job
         self._save_job(job)
@@ -111,12 +128,17 @@ class JobQueue:
         self._save_job(job)
 
     def delete_job(self, job_id: str) -> bool:
-        """Remove a job record and its persisted JSON file. Does not touch
-        any generated output files — see DocumentationGenerator.delete_output."""
+        """Remove a job record, its persisted JSON file, and (for uploads)
+        its sidecar source file. Does not touch any generated output files
+        — see DocumentationGenerator.delete_output."""
         with self._lock:
             job = self.jobs.pop(job_id, None)
         if job is None:
             return False
+        if job.source_type == "upload":
+            sidecar_path = Path(job.source)
+            if sidecar_path.exists():
+                sidecar_path.unlink()
         job_file = self.storage_dir / f"{job_id}.json"
         if job_file.exists():
             job_file.unlink()

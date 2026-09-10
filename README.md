@@ -73,8 +73,8 @@ Your Codebase
 │         Streamlit Web Interface (main.py)           │
 │  ┌──────────────────┬─────────────┬──────────────┐  │
 │  │ Local Upload     │ GitHub      │ View Jobs    │  │
-│  │ (Sync Mode)      │ Repository  │ (Track      │  │
-│  │                  │ (Async Mode)│ Progress)   │  │
+│  │ (zip/files)      │ Repository  │ (Track      │  │
+│  │                  │ (URL)       │ Progress)   │  │
 │  └──────────────────┴─────────────┴──────────────┘  │
 └────────────────────────┬────────────────────────────┘
                          │
@@ -146,12 +146,12 @@ not to invent what isn't given.
 ```mermaid
 flowchart TD
     CF["code_files<br/>(real file content)"] --> FS["build_file_structures()<br/>regex: real imports/functions/classes per file"]
-    A["Odysseus analysis<br/>architecture, reductionist_view, systems_view, ..."] --> CTX["build_doc_context()<br/>+ real repo_url"]
+    A["Odysseus analysis<br/>architecture, overview, how_it_works, ..."] --> CTX["build_doc_context()<br/>+ real repo_url"]
     FS --> SIG["select_significant_files()<br/>rank by real function/class count"]
     CTX --> SIG
     SIG --> FEAT["identify_features()<br/>ONE call — features named only from real files/functions given"]
 
-    CTX --> T1["Tier 1: Big Picture, Systems View,<br/>Architecture & Patterns"]
+    CTX --> T1["Tier 1: Big Picture, How It's Put Together,<br/>Architecture & Patterns"]
     FEAT --> T2["Tier 2: Feature → File Map<br/>ONE call, grounded in real features"]
     SIG --> T3["Tier 3: Per-File Walkthrough<br/>ONE call PER significant file,<br/>given that file's real source code"]
     CTX --> TAIL["Tail: Setup, Troubleshooting<br/>(real repo_url + dependencies)"]
@@ -190,8 +190,11 @@ who's doing the writing.)
 
 The trade-off: many more Ollama calls per document than a single-shot
 prompt — roughly `6 + significant_files` for Dev Docs and `3 + features`
-for the User Guide — so generation takes noticeably longer, especially on
-the synchronous Local Upload path.
+for the User Guide — so generation takes noticeably longer. Both Local
+Upload and GitHub Repository submit into the same background job queue
+(`core/background_worker.py`) rather than blocking the page, so a large
+codebase (100+ files) stays watchable via View Jobs instead of tying up
+the browser tab.
 
 Both flows also take a **Document Type** choice (Both / Developer Docs
 Only / End-User Guide Only) up front, so only the sections for the
@@ -208,13 +211,14 @@ of a silent progress bar — on the GitHub path this is stored on the job
 ### ✅ Core Features
 
 - **🏠 Local Upload Mode**
-  - Upload files or ZIP archives
-  - Instant processing & results
-  - Download immediately
+  - Upload files or one/multiple ZIP archives (merged into one codebase)
+  - Runs as a background job — same pipeline, progress reporting, and
+    analysis depth as the GitHub route, so large uploads don't block the page
+  - Download from View Jobs once complete
 
-- **🐙 GitHub Integration** (NEW)
+- **🐙 GitHub Integration**
   - Submit any public GitHub repository
-  - Automatic cloning with caching
+  - Automatic cloning with caching (refreshed on re-submission, not stuck on the first clone)
   - Support for HTTPS URLs & shorthand (user/repo)
 
 - **📊 Deep Analysis**
@@ -327,21 +331,26 @@ streamlit run app/main.py
 
 ## 🚀 Usage
 
-### Mode 1: Local File Upload (Synchronous)
+### Mode 1: Local File Upload
 
-**Best for:** Quick testing, small projects, immediate results
+**Best for:** Code that isn't in a (reachable) GitHub repo — including
+multiple ZIPs uploaded together, e.g. a separate frontend + backend archive,
+which get merged into one codebase before analysis
 
 ```
 1. Open: http://localhost:8501
 2. Select: "📁 Local Upload"
-3. Upload: Python files, JavaScript, or ZIP archives
-4. Wait: 1-3 minutes for analysis
-5. Download: Developer Docs + User Guide (MD + HTML)
+3. Upload: Python/JS/etc. files, or one or more ZIP archives
+4. Enter: Repository Name, choose Document Type
+5. Click: "🚀 Submit for Analysis"
+6. Get: Job ID — runs as a background job, same as GitHub Repository below
+7. Go to: "📋 View Jobs" to track progress and download results
 ```
 
-### Mode 2: GitHub Repository (Asynchronous)
+### Mode 2: GitHub Repository
 
-**Best for:** Large projects, production repositories, background processing
+**Best for:** Anything already hosted on GitHub — no need to download and
+re-upload it yourself
 
 ```
 1. Select: "🐙 GitHub Repository"
@@ -410,12 +419,12 @@ streamlit run app/main.py
 ### Example 2: Analyze Your Own Code
 
 ```bash
-# 1. Prepare your code repository
+# 1. Prepare your code (or multiple ZIPs, e.g. frontend + backend separately)
 # 2. Open: http://localhost:8501
 # 3. Select: "📁 Local Upload"
-# 4. Upload: Your Python/JavaScript files or ZIP
-# 5. Wait: 1-2 minutes
-# 6. Download: Professional documentation
+# 4. Upload: Your Python/JavaScript files, or one or more ZIP archives
+# 5. Submit for Analysis, then check "📋 View Jobs" for progress
+# 6. Download: Professional documentation once the job completes
 
 # Results saved to: ./data/outputs/your_project/
 ```

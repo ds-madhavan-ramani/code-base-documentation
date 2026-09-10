@@ -18,19 +18,6 @@ from core.github_client import GitHubClient
 from core.doc_generator import DocumentationGenerator
 from core.job_queue import JobQueue, JobStatus
 from core.background_worker import BackgroundWorker
-from utils.prompts import (
-    DEV_DOCS_TIER1_SECTIONS,
-    DEV_DOCS_TAIL_SECTIONS,
-    USER_DOCS_HEAD_SECTIONS,
-    USER_DOCS_TAIL_SECTIONS,
-    build_doc_context,
-    build_sectioned_doc,
-    select_significant_files,
-    identify_features,
-    build_feature_map_section,
-    build_file_walkthrough_sections,
-    build_user_feature_sections,
-)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -61,7 +48,10 @@ def init_clients():
 
     ollama = OllamaClient(ollama_url)
     doc_gen = DocumentationGenerator(os.getenv("OUTPUT_DIR", "./data/outputs"))
-    job_queue = JobQueue(os.getenv("JOBS_DIR", "./data/jobs"))
+    job_queue = JobQueue(
+        os.getenv("JOBS_DIR", "./data/jobs"),
+        upload_dir=os.getenv("UPLOAD_DIR", "./data/uploads")
+    )
 
     # Start background worker
     worker = BackgroundWorker(job_queue, odysseus, ollama, doc_gen,
@@ -100,10 +90,10 @@ uploaded_files = st.file_uploader(
 
 if uploaded_files:
     st.info(f"📦 {len(uploaded_files)} file(s) uploaded")
-    
+
     with tempfile.TemporaryDirectory() as tmpdir:
         tmpdir_path = Path(tmpdir)
-        
+
         # Extract files
         for file in uploaded_files:
             if file.name.endswith(".zip"):
@@ -111,141 +101,39 @@ if uploaded_files:
                     zf.extractall(tmpdir_path)
             else:
                 (tmpdir_path / file.name).write_bytes(file.getvalue())
-        
-        st.markdown("### Analysis & Documentation")
+
         parser = CodeParser(tmpdir_path)
-        
         with st.spinner("📂 Parsing code structure..."):
             code_files = parser.parse_directory()
-            file_tree = parser.create_file_tree()
-        
+
         st.success(f"Found {len(code_files)} code files")
-
-        repo_name = st.text_input("Repository Name", value="my_project")
-
-        # Cache the (expensive, multi-turn) Odysseus analysis in session state so
-        # unrelated reruns — e.g. clicking the Document Type radio below — don't
-        # silently re-trigger it. Only repo_name or a new upload invalidates it.
-        analysis_cache_key = f"{repo_name}::{len(code_files)}::{sum(len(c) for c in code_files.values())}"
-        if st.session_state.get("_analysis_cache_key") != analysis_cache_key:
-            with st.spinner("🧠 Analyzing with Odysseus..."):
-                st.session_state["_analysis_result"] = odysseus.analyze_deep(code_files, repo_name)
-            st.session_state["_analysis_cache_key"] = analysis_cache_key
-        analysis = st.session_state["_analysis_result"]
-
-        if analysis.get("fallback"):
-            st.warning("⚠️ Odysseus not responding - using fallback analysis")
-        else:
-            st.success("✓ Deep analysis complete")
-
-        doc_type_label = st.radio(
-            "Document Type", list(DOC_TYPE_OPTIONS.keys()), horizontal=True
-        )
-        doc_type = DOC_TYPE_OPTIONS[doc_type_label]
-
-        if st.button("🚀 Generate Documentation"):
-            progress = st.progress(0)
-            status_line = st.empty()
-
-            doc_context = build_doc_context(analysis)
-            doc_context["file_tree"] = file_tree  # richer tree from CodeParser than analysis's own
-
-            status_line.caption("🔍 Extracting real per-file structure...")
-            file_structures = parser.build_file_structures(code_files)
-            significant_files = select_significant_files(
-                code_files, file_structures, key_modules=analysis.get("key_modules")
+        if len(code_files) > 50:
+            st.info(
+                f"{len(code_files)} files is a large codebase for the deep-analysis "
+                "stage to work through — this can take a while. It now runs as a "
+                "background job, same as the GitHub Repository route: submit "
+                "below, then check 'View Jobs' for live progress."
             )
 
-            status_line.caption("🔍 Identifying real features...")
-            features = identify_features(ollama, DEV_MODEL, doc_context, significant_files, file_structures)
+        with st.form("local_upload_form"):
+            repo_name = st.text_input("Repository Name", value="my_project")
+            doc_type_label = st.radio(
+                "Document Type", list(DOC_TYPE_OPTIONS.keys()), horizontal=True
+            )
+            submitted = st.form_submit_button("🚀 Submit for Analysis")
 
-            want_dev = doc_type in ("both", "dev")
-            want_user = doc_type in ("both", "user")
-            sections_total = 0
-            if want_dev:
-                sections_total += len(DEV_DOCS_TIER1_SECTIONS) + 1 + len(significant_files) + len(DEV_DOCS_TAIL_SECTIONS)
-            if want_user:
-                sections_total += len(USER_DOCS_HEAD_SECTIONS) + len(features) + len(USER_DOCS_TAIL_SECTIONS)
-            done = {"n": 0}
-
-            def report(label, index, total, title):
-                done["n"] += 1
-                progress.progress(10 + int(80 * done["n"] / sections_total) if sections_total else 90)
-                status_line.caption(f"🔄 {label} — {index}/{total}: {title}")
-
-            progress.progress(10)
-
-            dev_docs = None
-            if want_dev:
-                tier1 = build_sectioned_doc(
-                    ollama, DEV_MODEL, DEV_DOCS_TIER1_SECTIONS, doc_context, context_length=8192,
-                    on_section=lambda i, t, title: report("Developer docs", i, t, title)
+        if submitted:
+            if not repo_name:
+                st.error("Please enter a repository name")
+            else:
+                # Same job pipeline as the GitHub route (background_worker.py),
+                # so depth of analysis and progress reporting are identical
+                # regardless of whether the code came from a zip or a URL.
+                job = job_queue.create_job(
+                    repo_name, "upload", code_files, doc_type=DOC_TYPE_OPTIONS[doc_type_label]
                 )
-                feature_map = build_feature_map_section(ollama, DEV_MODEL, doc_context, features, context_length=8192)
-                report("Developer docs", 1, 1, "Feature -> File Map")
-                walkthroughs = build_file_walkthrough_sections(
-                    ollama, DEV_MODEL, code_files, file_structures, significant_files, doc_context,
-                    context_length=8192,
-                    on_file=lambda i, t, filename: report("Developer docs — file walkthrough", i, t, filename)
-                )
-                tail = build_sectioned_doc(
-                    ollama, DEV_MODEL, DEV_DOCS_TAIL_SECTIONS, doc_context, context_length=8192,
-                    on_section=lambda i, t, title: report("Developer docs", i, t, title)
-                )
-                dev_body = "\n\n".join([
-                    tier1,
-                    "## Feature → File Map\n\n" + feature_map,
-                    "## Per-File Code Walkthrough\n\n" + walkthroughs,
-                    tail,
-                ])
-                dev_docs = f"# Developer Documentation: {doc_context['repo_name']}\n\n{dev_body}"
-
-            user_docs = None
-            if want_user:
-                head = build_sectioned_doc(
-                    ollama, USER_MODEL, USER_DOCS_HEAD_SECTIONS, doc_context, context_length=4096,
-                    on_section=lambda i, t, title: report("User guide", i, t, title)
-                )
-                feature_sections = build_user_feature_sections(
-                    ollama, USER_MODEL, doc_context, features, context_length=4096,
-                    on_feature=lambda i, t, name: report("User guide — feature", i, t, name)
-                )
-                user_tail = build_sectioned_doc(
-                    ollama, USER_MODEL, USER_DOCS_TAIL_SECTIONS, doc_context, context_length=4096,
-                    on_section=lambda i, t, title: report("User guide", i, t, title)
-                )
-                user_body = "\n\n".join([
-                    head,
-                    "## Features & How to Use Them\n\n" + feature_sections,
-                    user_tail,
-                ])
-                user_docs = f"# User Guide: {doc_context['repo_name']}\n\n{user_body}"
-
-            status_line.caption("💾 Saving documentation...")
-            saved_dir = doc_gen.save_documentation(repo_name, dev_docs, user_docs, analysis)
-            progress.progress(100)
-            status_line.caption("✅ Done")
-
-            st.success(f"✅ Documentation generated successfully! Saved to `{saved_dir}`")
-
-            if dev_docs:
-                st.markdown("### Preview: Developer Docs")
-                st.markdown(dev_docs[:1000] + "...\n\n*[Full documentation saved]*")
-
-            if user_docs:
-                st.markdown("### Preview: User Guide")
-                st.markdown(user_docs[:1000] + "...\n\n*[Full documentation saved]*")
-
-            # Download buttons
-            st.markdown("### 📥 Download Documentation")
-            for output_file in doc_gen.list_output_files(repo_name):
-                with open(output_file, "rb") as f:
-                    st.download_button(
-                        f"⬇️ {output_file.name}",
-                        f.read(),
-                        output_file.name,
-                        key=f"local_dl_{output_file.name}"
-                    )
+                st.success(f"✅ Job submitted! ID: `{job.job_id}`")
+                st.info("Analysis running in background. Check 'View Jobs' to monitor progress.")
 
 elif input_mode == "🐙 GitHub Repository":
     st.markdown("### Analyze GitHub Repository")
