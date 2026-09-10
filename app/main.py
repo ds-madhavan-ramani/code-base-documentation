@@ -116,8 +116,15 @@ if uploaded_files:
 
         repo_name = st.text_input("Repository Name", value="my_project")
 
-        with st.spinner("🧠 Analyzing with Odysseus..."):
-            analysis = odysseus.analyze_deep(code_files, repo_name)
+        # Cache the (expensive, multi-turn) Odysseus analysis in session state so
+        # unrelated reruns — e.g. clicking the Document Type radio below — don't
+        # silently re-trigger it. Only repo_name or a new upload invalidates it.
+        analysis_cache_key = f"{repo_name}::{len(code_files)}::{sum(len(c) for c in code_files.values())}"
+        if st.session_state.get("_analysis_cache_key") != analysis_cache_key:
+            with st.spinner("🧠 Analyzing with Odysseus..."):
+                st.session_state["_analysis_result"] = odysseus.analyze_deep(code_files, repo_name)
+            st.session_state["_analysis_cache_key"] = analysis_cache_key
+        analysis = st.session_state["_analysis_result"]
 
         if analysis.get("fallback"):
             st.warning("⚠️ Odysseus not responding - using fallback analysis")
@@ -195,20 +202,23 @@ elif input_mode == "🐙 GitHub Repository":
     st.markdown("### Analyze GitHub Repository")
     st.info("🚀 Submit a GitHub repository for deep analysis with Odysseus Harness")
 
-    col1, col2 = st.columns(2)
-    with col1:
-        repo_url = st.text_input(
-            "GitHub URL or Path",
-            placeholder="https://github.com/user/repo or user/repo"
+    with st.form("github_analysis_form"):
+        col1, col2 = st.columns(2)
+        with col1:
+            repo_url = st.text_input(
+                "GitHub URL or Path",
+                placeholder="https://github.com/user/repo or user/repo"
+            )
+        with col2:
+            repo_name = st.text_input("Project Name", placeholder="my_project")
+
+        doc_type_label = st.radio(
+            "Document Type", list(DOC_TYPE_OPTIONS.keys()), horizontal=True
         )
-    with col2:
-        repo_name = st.text_input("Project Name", placeholder="my_project")
 
-    doc_type_label = st.radio(
-        "Document Type", list(DOC_TYPE_OPTIONS.keys()), horizontal=True, key="github_doc_type"
-    )
+        submitted = st.form_submit_button("📤 Submit for Analysis")
 
-    if st.button("📤 Submit for Analysis"):
+    if submitted:
         if not repo_url or not repo_name:
             st.error("Please fill in all fields")
         else:
