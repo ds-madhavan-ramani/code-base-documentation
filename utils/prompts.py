@@ -23,6 +23,7 @@ diagram, including the Feature -> File Map and Per-File Walkthrough tiers.
 import json
 import logging
 import os
+import re
 from collections import defaultdict
 from typing import Dict, List, Optional
 
@@ -40,6 +41,34 @@ ANTI_HALLUCINATION_NOTE = (
 # Developer Docs. Override via env var for very large or very small repos.
 MAX_WALKTHROUGH_FILES = int(os.environ.get("DEV_DOCS_MAX_FILES", "12"))
 MAX_CHARS_PER_WALKTHROUGH_FILE = 6000
+
+_LEADING_HEADING_RE = re.compile(r"^#{1,6}[ \t].*\n+", re.MULTILINE)
+
+
+def _strip_leading_heading(text: str) -> str:
+    """Models routinely restate their own title as the first line despite
+    being told not to (e.g. a "# Systems View" right before the "## Systems
+    View" heading we already add), producing visibly duplicated headings.
+    Strip any heading line(s) at the very start of the text."""
+    stripped = text.lstrip()
+    match = _LEADING_HEADING_RE.match(stripped)
+    while match:
+        stripped = stripped[match.end():].lstrip()
+        match = _LEADING_HEADING_RE.match(stripped)
+    return stripped
+
+
+def _safe_generate(ollama_client, model: str, prompt: str, context_length: int, label: str) -> str:
+    """Every model call in this module goes through here so that one failed
+    call (timeout, Ollama restart, OOM) produces a visible placeholder for
+    just that section/file/feature instead of an uncaught exception that
+    discards every section already generated in the same document."""
+    try:
+        text = ollama_client.generate(model, prompt, context_length=context_length).strip()
+        return _strip_leading_heading(text)
+    except Exception as e:
+        logger.error(f"Generation failed for {label}: {e}")
+        return f"_(Generation failed for this section — {e})_"
 
 # --------------------------------------------------------------------------
 # Tier 1: whole-document, fixed sections (grounded in the Odysseus analysis
@@ -214,7 +243,7 @@ def build_sectioned_doc(ollama_client, model: str, sections: List[Dict[str, str]
         if on_section:
             on_section(index, total, section["title"])
         prompt = section["template"].format_map(safe_context) + f"\n\n{ANTI_HALLUCINATION_NOTE}"
-        body = ollama_client.generate(model, prompt, context_length=context_length).strip()
+        body = _safe_generate(ollama_client, model, prompt, context_length, section["title"])
         parts.append(f"## {section['title']}\n\n{body}")
     return "\n\n".join(parts)
 
@@ -273,7 +302,7 @@ Respond with JSON only, no markdown fence:
 
 {ANTI_HALLUCINATION_NOTE}"""
 
-    raw = ollama_client.generate(model, prompt, context_length=context_length)
+    raw = _safe_generate(ollama_client, model, prompt, context_length, "feature identification")
     try:
         start, end = raw.find("{"), raw.rfind("}") + 1
         data = json.loads(raw[start:end]) if start >= 0 and end > start else {}
@@ -312,7 +341,7 @@ Format: Markdown, one subheading per feature. Do not add a top-level
 heading, one will be added.
 
 {ANTI_HALLUCINATION_NOTE}"""
-    return ollama_client.generate(model, prompt, context_length=context_length).strip()
+    return _safe_generate(ollama_client, model, prompt, context_length, "Feature -> File Map")
 
 
 def build_file_walkthrough_sections(ollama_client, model: str, code_files: Dict[str, str],
@@ -350,7 +379,7 @@ code above — do not invent ones that aren't in it.
 Format: Markdown, no top-level heading (one will be added).
 
 {ANTI_HALLUCINATION_NOTE}"""
-        body = ollama_client.generate(model, prompt, context_length=context_length).strip()
+        body = _safe_generate(ollama_client, model, prompt, context_length, filename)
         parts.append(f"### `{filename}`\n\n{body}")
     return "\n\n".join(parts)
 
@@ -382,6 +411,6 @@ workflow conceptually rather than inventing precise syntax.
 Format: Markdown, 1-2 short paragraphs or a short bullet list. No top-level heading.
 
 {ANTI_HALLUCINATION_NOTE}"""
-        body = ollama_client.generate(model, prompt, context_length=context_length).strip()
+        body = _safe_generate(ollama_client, model, prompt, context_length, name)
         parts.append(f"### {name}\n\n{body}")
     return "\n\n".join(parts)
