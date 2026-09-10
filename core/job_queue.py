@@ -99,6 +99,18 @@ class JobQueue:
 
         self._save_job(job)
 
+    def delete_job(self, job_id: str) -> bool:
+        """Remove a job record and its persisted JSON file. Does not touch
+        any generated output files — see DocumentationGenerator.delete_output."""
+        job = self.jobs.pop(job_id, None)
+        if job is None:
+            return False
+        job_file = self.storage_dir / f"{job_id}.json"
+        if job_file.exists():
+            job_file.unlink()
+        logger.info(f"Deleted job {job_id}")
+        return True
+
     def list_jobs(self, repo_name: str = None) -> List[Job]:
         """List all jobs, optionally filtered by repo."""
         jobs = list(self.jobs.values())

@@ -16,6 +16,17 @@ logger = logging.getLogger(__name__)
 DEFAULT_MODEL = os.environ.get("ODYSSEUS_MODEL", "qwen3:32b")
 OLLAMA_URL = os.environ.get("OLLAMA_API_URL", "http://localhost:11434")
 
+# Ollama's own per-call context window. Without this, Ollama silently uses
+# its own tiny default (often 2048-4096 tokens) no matter how large the
+# Harness's budget_tokens/max_turns are configured — the conversation the
+# Harness thinks it's sending would get truncated before the model ever
+# sees most of it. 32768 is a safe bump for a 32B-class model; raise it
+# further only if you have the VRAM/RAM for the larger KV-cache it costs.
+NUM_CTX = int(os.environ.get("ODYSSEUS_NUM_CTX", "32768"))
+
+# Longer conversations (more turns, more context) take longer per call.
+TIMEOUT = int(os.environ.get("ODYSSEUS_TIMEOUT", "900"))
+
 
 def api_key() -> str:
     """Ollama doesn't require API keys - just return a placeholder."""
@@ -44,8 +55,9 @@ def complete(model: str, system: str, messages: list[dict], tools: list[dict]) -
                 "prompt": prompt,
                 "stream": False,
                 "temperature": 0.7,  # Good for reasoning
+                "num_ctx": NUM_CTX,
             },
-            timeout=600,  # 10 minutes
+            timeout=TIMEOUT,
         )
         response.raise_for_status()
 

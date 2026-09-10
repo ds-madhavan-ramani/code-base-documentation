@@ -286,15 +286,19 @@ elif input_mode == "📋 View Jobs":
         st.info("No analysis jobs yet")
     else:
         any_active = False
+        selected_for_deletion = []
         for job in jobs:
             with st.expander(f"**{job.repo_name}** - {job.status.value.upper()} ({job.progress}%)"):
-                col1, col2, col3 = st.columns(3)
+                col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
                 with col1:
                     st.metric("Status", job.status.value)
                 with col2:
                     st.metric("Progress", f"{job.progress}%")
                 with col3:
                     st.metric("Source", job.source_type)
+                with col4:
+                    if st.checkbox("🗑️ Select", key=f"select_del_{job.job_id}"):
+                        selected_for_deletion.append(job)
 
                 if job.status in (JobStatus.PENDING, JobStatus.RUNNING):
                     any_active = True
@@ -323,6 +327,28 @@ elif input_mode == "📋 View Jobs":
                                     f"{job.repo_name}_{output_file.name}",
                                     key=f"dl_{job.job_id}_{output_file.name}"
                                 )
+
+        if selected_for_deletion:
+            st.divider()
+            names = ", ".join(f"**{j.repo_name}**" for j in selected_for_deletion)
+            st.warning(
+                f"⚠️ {len(selected_for_deletion)} job(s) selected: {names}. "
+                "Deleting removes the job record AND permanently deletes that "
+                "project's generated output files on disk (all files under "
+                "`<OUTPUT_DIR>/<project name>/` — if another job shares the "
+                "same project name, its output files are removed too, since "
+                "output is stored per project name, not per job)."
+            )
+            confirm_delete = st.checkbox(
+                "I understand this permanently deletes the selected job(s) and their output files",
+                key="confirm_bulk_delete"
+            )
+            if st.button("🗑️ Delete Selected", disabled=not confirm_delete):
+                for job in selected_for_deletion:
+                    doc_gen.delete_output(job.repo_name)
+                    job_queue.delete_job(job.job_id)
+                st.success(f"Deleted {len(selected_for_deletion)} job(s).")
+                st.rerun()
 
         if any_active:
             time.sleep(2)
