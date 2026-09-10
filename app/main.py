@@ -2,6 +2,7 @@ import streamlit as st
 import os
 import sys
 import tempfile
+import time
 import zipfile
 import logging
 from pathlib import Path
@@ -30,6 +31,12 @@ load_dotenv()
 
 DEV_MODEL = os.getenv("OLLAMA_DEV_MODEL", "qwen2.5-coder:7b")
 USER_MODEL = os.getenv("OLLAMA_USER_MODEL", "qwen2.5-coder:7b")
+
+DOC_TYPE_OPTIONS = {
+    "Both": "both",
+    "Developer Docs Only": "dev",
+    "End-User Guide Only": "user",
+}
 
 st.set_page_config(page_title="Codebase Documentor", layout="wide")
 st.title("🔍 Codebase Documentation Generator")
@@ -117,73 +124,71 @@ if uploaded_files:
         else:
             st.success("✓ Deep analysis complete")
 
+        doc_type_label = st.radio(
+            "Document Type", list(DOC_TYPE_OPTIONS.keys()), horizontal=True
+        )
+        doc_type = DOC_TYPE_OPTIONS[doc_type_label]
+
         if st.button("🚀 Generate Documentation"):
             progress = st.progress(0)
+            status_line = st.empty()
 
             doc_context = build_doc_context(analysis)
             doc_context["file_tree"] = file_tree  # richer tree from CodeParser than analysis's own
+
+            want_dev = doc_type in ("both", "dev")
+            want_user = doc_type in ("both", "user")
+            sections_total = (len(DEV_DOCS_SECTIONS) if want_dev else 0) + \
+                              (len(USER_DOCS_SECTIONS) if want_user else 0)
+            done = {"n": 0}
+
+            def report(label, index, total, title):
+                done["n"] += 1
+                progress.progress(10 + int(80 * done["n"] / sections_total))
+                status_line.caption(f"🔄 {label} — section {index}/{total}: {title}")
+
             progress.progress(10)
 
-            with st.spinner("📝 Generating developer documentation (section by section)..."):
+            dev_docs = None
+            if want_dev:
                 dev_body = build_sectioned_doc(
-                    ollama, DEV_MODEL, DEV_DOCS_SECTIONS, doc_context, context_length=8192
+                    ollama, DEV_MODEL, DEV_DOCS_SECTIONS, doc_context, context_length=8192,
+                    on_section=lambda i, t, title: report("Developer docs", i, t, title)
                 )
                 dev_docs = f"# Developer Documentation: {doc_context['repo_name']}\n\n{dev_body}"
-            progress.progress(50)
 
-            with st.spinner("📚 Generating user guide (section by section)..."):
+            user_docs = None
+            if want_user:
                 user_body = build_sectioned_doc(
-                    ollama, USER_MODEL, USER_DOCS_SECTIONS, doc_context, context_length=4096
+                    ollama, USER_MODEL, USER_DOCS_SECTIONS, doc_context, context_length=4096,
+                    on_section=lambda i, t, title: report("User guide", i, t, title)
                 )
                 user_docs = f"# User Guide: {doc_context['repo_name']}\n\n{user_body}"
-            progress.progress(75)
-            
-            with st.spinner("💾 Saving documentation..."):
-                doc_gen.save_documentation(repo_name, dev_docs, user_docs, analysis)
+
+            status_line.caption("💾 Saving documentation...")
+            saved_dir = doc_gen.save_documentation(repo_name, dev_docs, user_docs, analysis)
             progress.progress(100)
-            
-            st.success("✅ Documentation generated successfully!")
-            
-            st.markdown("### Preview: Developer Docs")
-            st.markdown(dev_docs[:1000] + "...\n\n*[Full documentation saved]*")
-            
-            st.markdown("### Preview: User Guide")
-            st.markdown(user_docs[:1000] + "...\n\n*[Full documentation saved]*")
-            
+            status_line.caption("✅ Done")
+
+            st.success(f"✅ Documentation generated successfully! Saved to `{saved_dir}`")
+
+            if dev_docs:
+                st.markdown("### Preview: Developer Docs")
+                st.markdown(dev_docs[:1000] + "...\n\n*[Full documentation saved]*")
+
+            if user_docs:
+                st.markdown("### Preview: User Guide")
+                st.markdown(user_docs[:1000] + "...\n\n*[Full documentation saved]*")
+
             # Download buttons
             st.markdown("### 📥 Download Documentation")
-            output_path = Path(os.getenv("OUTPUT_DIR", "./data/outputs")) / repo_name
-            
-            if (output_path / "DEVELOPER_DOCS.md").exists():
-                with open(output_path / "DEVELOPER_DOCS.md") as f:
+            for output_file in doc_gen.list_output_files(repo_name):
+                with open(output_file, "rb") as f:
                     st.download_button(
-                        "📄 Developer Docs (MD)",
+                        f"⬇️ {output_file.name}",
                         f.read(),
-                        "DEVELOPER_DOCS.md"
-                    )
-            
-            if (output_path / "USER_GUIDE.md").exists():
-                with open(output_path / "USER_GUIDE.md") as f:
-                    st.download_button(
-                        "📘 User Guide (MD)",
-                        f.read(),
-                        "USER_GUIDE.md"
-                    )
-            
-            if (output_path / "DEVELOPER_DOCS.html").exists():
-                with open(output_path / "DEVELOPER_DOCS.html") as f:
-                    st.download_button(
-                        "🌐 Developer Docs (HTML)",
-                        f.read(),
-                        "DEVELOPER_DOCS.html"
-                    )
-            
-            if (output_path / "USER_GUIDE.html").exists():
-                with open(output_path / "USER_GUIDE.html") as f:
-                    st.download_button(
-                        "🌐 User Guide (HTML)",
-                        f.read(),
-                        "USER_GUIDE.html"
+                        output_file.name,
+                        key=f"local_dl_{output_file.name}"
                     )
 
 elif input_mode == "🐙 GitHub Repository":
@@ -199,12 +204,18 @@ elif input_mode == "🐙 GitHub Repository":
     with col2:
         repo_name = st.text_input("Project Name", placeholder="my_project")
 
+    doc_type_label = st.radio(
+        "Document Type", list(DOC_TYPE_OPTIONS.keys()), horizontal=True, key="github_doc_type"
+    )
+
     if st.button("📤 Submit for Analysis"):
         if not repo_url or not repo_name:
             st.error("Please fill in all fields")
         else:
             # Create job
-            job = job_queue.create_job(repo_name, "github", repo_url)
+            job = job_queue.create_job(
+                repo_name, "github", repo_url, doc_type=DOC_TYPE_OPTIONS[doc_type_label]
+            )
             st.success(f"✅ Job submitted! ID: `{job.job_id}`")
             st.info("Analysis running in background. Check 'View Jobs' to monitor progress.")
 
@@ -215,6 +226,7 @@ elif input_mode == "📋 View Jobs":
     if not jobs:
         st.info("No analysis jobs yet")
     else:
+        any_active = False
         for job in jobs:
             with st.expander(f"**{job.repo_name}** - {job.status.value.upper()} ({job.progress}%)"):
                 col1, col2, col3 = st.columns(3)
@@ -225,6 +237,11 @@ elif input_mode == "📋 View Jobs":
                 with col3:
                     st.metric("Source", job.source_type)
 
+                if job.status in (JobStatus.PENDING, JobStatus.RUNNING):
+                    any_active = True
+                    st.progress(job.progress / 100)
+                    st.caption(f"🔄 {job.current_step or 'Waiting...'}")
+
                 if job.error:
                     st.error(f"❌ Error: {job.error}")
 
@@ -232,25 +249,22 @@ elif input_mode == "📋 View Jobs":
                     # Show analysis results
                     if job.analysis:
                         st.success("✅ Analysis Complete")
-                        with st.expander("📊 Analysis Results"):
+                        if st.checkbox("📊 Show Analysis Results (JSON)", key=f"show_analysis_{job.job_id}"):
                             st.json(job.analysis)
 
-                    # Show download buttons
-                    output_path = Path(os.getenv("OUTPUT_DIR", "./data/outputs")) / job.repo_name
-                    if (output_path / "DEVELOPER_DOCS.md").exists():
-                        with open(output_path / "DEVELOPER_DOCS.md") as f:
-                            st.download_button(
-                                "📄 Developer Docs",
-                                f.read(),
-                                f"{job.repo_name}_DEVELOPER_DOCS.md",
-                                key=f"dev_{job.job_id}"
-                            )
+                    # Show every output file actually saved for this project
+                    output_files = doc_gen.list_output_files(job.repo_name)
+                    if output_files:
+                        st.caption(f"📁 Saved to: `{doc_gen.output_dir_for(job.repo_name)}`")
+                        for output_file in output_files:
+                            with open(output_file, "rb") as f:
+                                st.download_button(
+                                    f"⬇️ {output_file.name}",
+                                    f.read(),
+                                    f"{job.repo_name}_{output_file.name}",
+                                    key=f"dl_{job.job_id}_{output_file.name}"
+                                )
 
-                    if (output_path / "USER_GUIDE.md").exists():
-                        with open(output_path / "USER_GUIDE.md") as f:
-                            st.download_button(
-                                "📘 User Guide",
-                                f.read(),
-                                f"{job.repo_name}_USER_GUIDE.md",
-                                key=f"user_{job.job_id}"
-                            )
+        if any_active:
+            time.sleep(2)
+            st.rerun()

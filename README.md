@@ -157,6 +157,16 @@ completion. The trade-off: more Ollama calls per document (7-11 instead of
 1), so generation takes longer — most noticeable on the synchronous Local
 Upload path, less so on the backgrounded GitHub job path.
 
+Both flows also take a **Document Type** choice (Both / Developer Docs
+Only / End-User Guide Only) up front, so only the sections for the
+requested type(s) run — skipping the User Guide's 4 sections when only
+Developer Docs were asked for, for example. And because
+`build_sectioned_doc()` reports each section as it starts, both flows
+surface a live one-line status ("Developer docs — section 3/7: Architecture
+& Design Patterns") instead of a silent progress bar — on the GitHub path
+this is stored on the job (`current_step`) and the View Jobs page
+auto-refreshes to show it moving.
+
 ---
 
 ## 🎨 Features
@@ -305,10 +315,11 @@ streamlit run app/main.py
    - Full: https://github.com/pallets/flask
    - Short: pallets/flask
 3. Enter: Project name (e.g., Flask)
-4. Click: "📤 Submit for Analysis"
-5. Get: Job ID (e.g., abc12345)
-6. Go to: "📋 View Jobs" to track progress
-7. Download: Results when progress reaches 100%
+4. Choose: Document Type — Both / Developer Docs Only / End-User Guide Only
+5. Click: "📤 Submit for Analysis"
+6. Get: Job ID (e.g., abc12345)
+7. Go to: "📋 View Jobs" to track progress
+8. Download: Results when progress reaches 100%
 ```
 
 ### Mode 3: View & Manage Jobs
@@ -319,10 +330,17 @@ streamlit run app/main.py
 1. Select: "📋 View Jobs"
 2. View: All submitted analyses with status
 3. Expand: Individual jobs to see details
-4. Monitor: Real-time progress bars (0-100%)
-5. Download: Generated documentation when complete
+4. Monitor: A live one-line status (e.g. "Developer docs — section 3/7:
+   Architecture & Design Patterns") plus a real-time progress bar — the
+   page auto-refreshes every ~2s while a job is pending/running
+5. Download: Every file actually saved for the project (only the
+   document type you chose at submission gets generated)
 6. Error: Review error messages if job failed
 ```
+
+Generated files are always persisted to disk under
+`<OUTPUT_DIR>/<project name>/` (default `./data/outputs/<project name>/`) —
+the View Jobs page shows the exact path for each completed job.
 
 ---
 

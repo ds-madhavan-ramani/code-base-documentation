@@ -187,16 +187,23 @@ def build_doc_context(analysis: dict) -> dict:
 
 
 def build_sectioned_doc(ollama_client, model: str, sections: List[Dict[str, str]],
-                         context: dict, context_length: int = 8192) -> str:
+                         context: dict, context_length: int = 8192, on_section=None) -> str:
     """Generate a Markdown document one section at a time.
 
     Each section gets its own model call instead of one shot for the whole
     document, so a smaller local model has room to go deep on each part
     rather than running out of depth over a single giant completion.
+
+    `on_section(index, total, title)`, if given, is called just before each
+    section's model call — used to surface live progress (e.g. "section
+    3/7: Architecture & Design Patterns") to a caller.
     """
     safe_context = defaultdict(lambda: "N/A", context)
+    total = len(sections)
     parts = []
-    for section in sections:
+    for index, section in enumerate(sections, start=1):
+        if on_section:
+            on_section(index, total, section["title"])
         prompt = section["template"].format_map(safe_context)
         body = ollama_client.generate(model, prompt, context_length=context_length).strip()
         parts.append(f"## {section['title']}\n\n{body}")
