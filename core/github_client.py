@@ -37,8 +37,20 @@ class GitHubClient:
 
             local_path = self.cache_dir / repo_name
             if local_path.exists():
-                logger.info(f"Repository already cached: {repo_name}")
-                return local_path, None
+                logger.info(f"Repository cached at {local_path}, pulling latest changes...")
+                pull_result = subprocess.run(
+                    ["git", "-C", str(local_path), "pull", "--depth", "1", "--ff-only"],
+                    capture_output=True,
+                    text=True,
+                    timeout=120
+                )
+                if pull_result.returncode == 0:
+                    return local_path, None
+                logger.warning(
+                    f"git pull failed for cached repo {repo_name} ({pull_result.stderr.strip()}); "
+                    "re-cloning fresh instead of analyzing a possibly-stale checkout"
+                )
+                shutil.rmtree(local_path, ignore_errors=True)
 
             logger.info(f"Cloning {full_url} to {local_path}...")
             result = subprocess.run(
