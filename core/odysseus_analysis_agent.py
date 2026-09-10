@@ -136,6 +136,14 @@ TASK: Provide a deep analysis with these sections:
 4. **PATTERNS**: Design patterns, architectural patterns used
 5. **DATA_FLOW**: How data moves through the system
 6. **KEY_INSIGHTS**: Notable strengths, potential issues, technical highlights
+7. **REDUCTIONIST_VIEW**: Strip away the details. In plain language, explain
+   WHAT this codebase does, HOW it does it at the highest level, and WHY it
+   is built this way — the simplified big picture, as if explaining it to
+   someone who will never read the code.
+8. **SYSTEMS_VIEW**: Explain how the pieces fit together to produce that big
+   picture. Name the actual files/modules/scripts involved and trace how
+   they connect and hand off to each other (calls, data, control flow) —
+   the code-wise and script-wise view of the whole system.
 
 FORMAT: Respond with valid JSON only (no markdown, no ```json``` wrapper):
 {{
@@ -144,7 +152,9 @@ FORMAT: Respond with valid JSON only (no markdown, no ```json``` wrapper):
   "dependencies": ["list", "of", "dependencies"],
   "patterns": ["list", "of", "patterns"],
   "data_flow": "description of data flow",
-  "key_insights": "string with key findings"
+  "key_insights": "string with key findings",
+  "reductionist_view": "big-picture what/how/why in plain language",
+  "systems_view": "how each file/module fits together, code-wise and script-wise"
 }}
 
 Be concise but insightful. Focus on what makes this codebase unique."""
@@ -176,6 +186,8 @@ Be concise but insightful. Focus on what makes this codebase unique."""
             "patterns": analysis.get("patterns", []),
             "data_flow": analysis.get("data_flow", ""),
             "key_insights": analysis.get("key_insights", ""),
+            "reductionist_view": analysis.get("reductionist_view", ""),
+            "systems_view": analysis.get("systems_view", ""),
             "file_tree": self._build_file_tree(code_files),
             "metrics": {
                 "total_files": len(code_files),
@@ -209,6 +221,21 @@ Be concise but insightful. Focus on what makes this codebase unique."""
                         class_name = line.split("(")[0].replace("class ", "").strip()
                         classes.append(class_name)
 
+        top_deps = sorted(imports)[:5]
+        reductionist_view = (
+            f"This codebase spans {len(code_files)} file(s) and revolves around "
+            f"{', '.join(top_deps) if top_deps else 'no detected external dependencies'}. "
+            f"At a glance it defines {len(classes)} class(es) and {len(functions)} "
+            "function(s) that together implement its behavior. "
+            "(Heuristic summary — Odysseus was unavailable for a deeper read.)"
+        )
+        systems_view = (
+            "Key files: " + ", ".join(list(code_files.keys())[:10]) + ". "
+            "File-to-file wiring (which module calls or imports which) could not "
+            "be traced without Odysseus deep analysis; this fallback only lists "
+            "the file inventory and top-level imports."
+        )
+
         return {
             "repo_name": repo_name,
             "fallback": True,
@@ -218,6 +245,8 @@ Be concise but insightful. Focus on what makes this codebase unique."""
             "patterns": [],
             "functions": functions[:30],
             "classes": classes[:20],
+            "reductionist_view": reductionist_view,
+            "systems_view": systems_view,
             "metrics": {
                 "total_files": len(code_files),
                 "total_lines": sum(len(v.split("\n")) for v in code_files.values()),

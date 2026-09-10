@@ -38,7 +38,7 @@ def init_clients():
     ollama_url = os.getenv("OLLAMA_API_URL", "http://localhost:11434")
 
     # Initialize Odysseus Analysis Agent (direct harness, no API needed)
-    odysseus_model = os.getenv("ODYSSEUS_MODEL", "claude-opus-4-1")
+    odysseus_model = os.getenv("ODYSSEUS_MODEL", "qwen3:32b")
     odysseus = OdysseusAnalysisAgent(model=odysseus_model)
 
     ollama = OllamaClient(ollama_url)
@@ -102,17 +102,17 @@ if uploaded_files:
             file_tree = parser.create_file_tree()
         
         st.success(f"Found {len(code_files)} code files")
-        
+
+        repo_name = st.text_input("Repository Name", value="my_project")
+
         with st.spinner("🧠 Analyzing with Odysseus..."):
-            analysis = odysseus.analyze_codebase(code_files)
-        
+            analysis = odysseus.analyze_deep(code_files, repo_name)
+
         if analysis.get("fallback"):
             st.warning("⚠️ Odysseus not responding - using fallback analysis")
         else:
             st.success("✓ Deep analysis complete")
-        
-        repo_name = st.text_input("Repository Name", value="my_project")
-        
+
         if st.button("🚀 Generate Documentation"):
             progress = st.progress(0)
             
@@ -127,7 +127,9 @@ if uploaded_files:
                 dev_docs_prompt = PROMPTS["dev_docs"].format(
                     file_tree=file_tree,
                     code_structure=json.dumps(code_structure, indent=2)[:2000],
-                    architecture=analysis.get("architecture", "")
+                    architecture=analysis.get("architecture", ""),
+                    reductionist_view=analysis.get("reductionist_view", "N/A"),
+                    systems_view=analysis.get("systems_view", "N/A")
                 )
                 dev_docs = ollama.generate(
                     DEV_MODEL,
@@ -138,7 +140,8 @@ if uploaded_files:
             
             with st.spinner("📚 Generating user guide..."):
                 user_docs_prompt = PROMPTS["user_docs"].format(
-                    modules=", ".join(analysis.get("key_modules", [])[:5])
+                    modules=", ".join(analysis.get("key_modules", [])[:5]),
+                    reductionist_view=analysis.get("reductionist_view", "N/A")
                 )
                 user_docs = ollama.generate(
                     USER_MODEL,
