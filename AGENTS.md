@@ -44,9 +44,16 @@ This document describes the autonomous agents and workflows available in the sys
 3. If all fail → use any available model
 4. If none available → error
 
-**Prompts Used:**
-- `dev_docs` - Technical architecture, APIs, code deep dive
-- `user_docs` - Quick start, features, FAQ, simple language
+**Generation Style:** Section-by-section, not one shot — each document is
+broken into independent sections (`utils/prompts.py`), and Ollama is
+called once per section so a smaller model doesn't run out of depth over
+one long completion. See README.md's "Documentation Generation
+(Section-by-Section)" section for the flow diagram.
+- `DEV_DOCS_SECTIONS` (7 calls) - Big Picture, Systems View, Architecture &
+  Patterns, Module & Dependency Map, Key APIs/Functions/Classes,
+  Configuration & Workflow, Common Tasks & Troubleshooting
+- `USER_DOCS_SECTIONS` (4 calls) - Big Picture, Quick Start & Install,
+  Features & Workflows, FAQ & Support
 
 ---
 

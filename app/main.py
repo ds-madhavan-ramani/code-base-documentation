@@ -3,7 +3,6 @@ import os
 import sys
 import tempfile
 import zipfile
-import json
 import logging
 from pathlib import Path
 from dotenv import load_dotenv
@@ -18,7 +17,12 @@ from core.github_client import GitHubClient
 from core.doc_generator import DocumentationGenerator
 from core.job_queue import JobQueue, JobStatus
 from core.background_worker import BackgroundWorker
-from utils.prompts import PROMPTS
+from utils.prompts import (
+    DEV_DOCS_SECTIONS,
+    USER_DOCS_SECTIONS,
+    build_doc_context,
+    build_sectioned_doc,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -115,39 +119,23 @@ if uploaded_files:
 
         if st.button("🚀 Generate Documentation"):
             progress = st.progress(0)
-            
-            with st.spinner("📊 Extracting code structure..."):
-                code_structure = {}
-                for filename, content in list(code_files.items())[:3]:
-                    lang = parser.get_language_from_extension(filename)
-                    code_structure[filename] = parser.extract_structure(content, lang)
-            progress.progress(25)
-            
-            with st.spinner("📝 Generating developer documentation..."):
-                dev_docs_prompt = PROMPTS["dev_docs"].format(
-                    file_tree=file_tree,
-                    code_structure=json.dumps(code_structure, indent=2)[:2000],
-                    architecture=analysis.get("architecture", ""),
-                    reductionist_view=analysis.get("reductionist_view", "N/A"),
-                    systems_view=analysis.get("systems_view", "N/A")
+
+            doc_context = build_doc_context(analysis)
+            doc_context["file_tree"] = file_tree  # richer tree from CodeParser than analysis's own
+            progress.progress(10)
+
+            with st.spinner("📝 Generating developer documentation (section by section)..."):
+                dev_body = build_sectioned_doc(
+                    ollama, DEV_MODEL, DEV_DOCS_SECTIONS, doc_context, context_length=8192
                 )
-                dev_docs = ollama.generate(
-                    DEV_MODEL,
-                    dev_docs_prompt,
-                    context_length=8192
-                )
+                dev_docs = f"# Developer Documentation: {doc_context['repo_name']}\n\n{dev_body}"
             progress.progress(50)
-            
-            with st.spinner("📚 Generating user guide..."):
-                user_docs_prompt = PROMPTS["user_docs"].format(
-                    modules=", ".join(analysis.get("key_modules", [])[:5]),
-                    reductionist_view=analysis.get("reductionist_view", "N/A")
+
+            with st.spinner("📚 Generating user guide (section by section)..."):
+                user_body = build_sectioned_doc(
+                    ollama, USER_MODEL, USER_DOCS_SECTIONS, doc_context, context_length=4096
                 )
-                user_docs = ollama.generate(
-                    USER_MODEL,
-                    user_docs_prompt,
-                    context_length=4096
-                )
+                user_docs = f"# User Guide: {doc_context['repo_name']}\n\n{user_body}"
             progress.progress(75)
             
             with st.spinner("💾 Saving documentation..."):

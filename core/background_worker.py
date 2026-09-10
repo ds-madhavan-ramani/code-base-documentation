@@ -11,7 +11,12 @@ from core.github_client import GitHubClient
 from core.code_parser import CodeParser
 from core.ollama_client import OllamaClient
 from core.doc_generator import DocumentationGenerator
-from utils.prompts import PROMPTS
+from utils.prompts import (
+    DEV_DOCS_SECTIONS,
+    USER_DOCS_SECTIONS,
+    build_doc_context,
+    build_sectioned_doc,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -132,40 +137,25 @@ class BackgroundWorker:
             return None, f"Failed to parse repository: {str(e)}"
 
     def _generate_dev_docs(self, analysis: Dict) -> str:
-        """Generate developer documentation from analysis."""
+        """Generate developer documentation from analysis, one section at a time."""
         try:
-            prompt = PROMPTS.get("dev_docs", "").format(
-                file_tree=analysis.get("file_tree", "N/A"),
-                code_structure=json.dumps(analysis.get("key_modules", []))[:2000],
-                architecture=analysis.get("architecture", ""),
-                reductionist_view=analysis.get("reductionist_view", "N/A"),
-                systems_view=analysis.get("systems_view", "N/A")
+            context = build_doc_context(analysis)
+            body = build_sectioned_doc(
+                self.ollama, self.dev_model, DEV_DOCS_SECTIONS, context, context_length=8192
             )
-
-            dev_docs = self.ollama.generate(
-                self.dev_model,
-                prompt,
-                context_length=8192
-            )
-            return dev_docs
+            return f"# Developer Documentation: {context['repo_name']}\n\n{body}"
         except Exception as e:
             logger.error(f"Dev docs generation failed: {e}")
             return f"# Developer Documentation\n\nGeneration failed: {e}"
 
     def _generate_user_docs(self, analysis: Dict) -> str:
-        """Generate user guide from analysis."""
+        """Generate user guide from analysis, one section at a time."""
         try:
-            prompt = PROMPTS.get("user_docs", "").format(
-                modules=", ".join(analysis.get("key_modules", [])[:5]),
-                reductionist_view=analysis.get("reductionist_view", "N/A")
+            context = build_doc_context(analysis)
+            body = build_sectioned_doc(
+                self.ollama, self.user_model, USER_DOCS_SECTIONS, context, context_length=4096
             )
-
-            user_docs = self.ollama.generate(
-                self.user_model,
-                prompt,
-                context_length=4096
-            )
-            return user_docs
+            return f"# User Guide: {context['repo_name']}\n\n{body}"
         except Exception as e:
             logger.error(f"User docs generation failed: {e}")
             return f"# User Guide\n\nGeneration failed: {e}"

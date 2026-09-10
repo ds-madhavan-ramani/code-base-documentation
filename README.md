@@ -123,6 +123,40 @@ Your Codebase
 | **Templates** | Jinja2 | Dynamic prompt generation |
 | **Version Control** | Git | Repository management |
 
+### 📝 Documentation Generation (Section-by-Section)
+
+A small local model (e.g. `qwen2.5-coder:7b`) tends to run out of depth if
+asked to write a whole multi-section document in one completion. So instead
+of one prompt per document, `utils/prompts.py` breaks each document into
+independent sections — 7 for Developer Docs, 4 for the User Guide — and
+calls Ollama once per section, then concatenates the results:
+
+```mermaid
+flowchart TD
+    A["Analysis dict<br/>architecture, key_modules, dependencies,<br/>reductionist_view, systems_view, ..."] --> B["build_doc_context()"]
+    B --> C{"build_sectioned_doc()"}
+    C --> S1["Section: Big Picture"]
+    C --> S2["Section: Systems View"]
+    C --> S3["Section: Architecture & Patterns"]
+    C --> S4["Section: ...more sections"]
+    S1 --> G1["ollama.generate()"]
+    S2 --> G2["ollama.generate()"]
+    S3 --> G3["ollama.generate()"]
+    S4 --> G4["ollama.generate()"]
+    G1 --> D["Concatenate as Markdown<br/>## <section title> per block"]
+    G2 --> D
+    G3 --> D
+    G4 --> D
+    D --> E["DEVELOPER_DOCS.md / USER_GUIDE.md"]
+```
+
+Each section gets the model's full attention and output budget instead of
+sharing it across the whole document, so detail and completeness stop
+being capped by how much a smaller model can hold together in one
+completion. The trade-off: more Ollama calls per document (7-11 instead of
+1), so generation takes longer — most noticeable on the synchronous Local
+Upload path, less so on the backgrounded GitHub job path.
+
 ---
 
 ## 🎨 Features
