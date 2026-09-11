@@ -237,6 +237,21 @@ get wrongly pinned to an unrelated file that did make the cut, since that
 was the only file the model had to choose from. This was a real, observed
 failure mode, not a theoretical one.
 
+Its prompt also explicitly asks for END-USER-FACING capabilities only,
+naming infrastructure/plumbing (logging setup, generic collections
+helpers, object-proxy utilities, exception hierarchies) as things NOT to
+list as a "feature" even when their file is architecturally important
+enough to appear in the candidate pool. Found on a real celery/celery
+run: `celery/local.py` — an internal lazy-object-proxy utility — got
+named as a "Local Proxy" feature, and since there's no real end-user
+capability to describe, `build_user_feature_sections()` invented one
+("run tasks locally without a separate broker") when asked to explain it
+for a non-technical reader. This is deliberately a prompt-level fix, not
+a filename/path blacklist — whether a file is "user-facing" depends on
+what its real functions/classes actually do, not what it's called (a
+hardcoded ban on e.g. `utils.py` would be wrong for a project where that
+file happens to hold real business logic).
+
 That widened pool turned out not to be the whole story. `select_significant_files()`
 was already meant to always reserve a slot for Odysseus's own `key_modules`
 — the files its deep-analysis pass explicitly flags as central, even ones
