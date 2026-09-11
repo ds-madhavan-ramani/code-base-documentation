@@ -596,6 +596,42 @@ def build_sectioned_doc(ollama_client, model: str, sections: List[Dict[str, str]
 # the fix for hallucinated function names and feature descriptions.
 # --------------------------------------------------------------------------
 
+_TEST_DIR_COMPONENTS = {"test", "tests", "t", "__tests__", "spec", "specs"}
+_DOC_DIR_COMPONENTS = {"docs", "doc", "documentation"}
+_TEST_FILENAME_RE = re.compile(
+    r"^(test_.+|.+_test|.+\.test|.+\.spec|.+Test|.+Tests|.+TestCase|.+IT)\.[A-Za-z0-9]+$"
+)
+
+
+def is_low_value_for_deep_documentation(filename: str) -> bool:
+    """Test files, doc-tooling files, and bare package markers are real,
+    parseable files (often with plenty of functions/classes — a test
+    file with twenty `test_*` functions scores high on sheer richness)
+    but low value for the expensive tiers: a developer reading "Per-File
+    Code Walkthrough" wants the real application logic, not a
+    file-by-file account of test_add_task, and "richness" as a
+    tie-breaker was letting test files crowd out genuinely important but
+    less-called production files from the walkthrough budget.
+
+    Excluded from: the walkthrough, feature identification, and Common
+    Tasks grounding (anything built from select_significant_files).
+    NOT excluded from: the Repository Structure tree/comments — those
+    still cover every real file, tests included, since that tier is cheap
+    and purely informative rather than a deep-dive."""
+    path = filename.replace("\\", "/")
+    parts = path.split("/")
+    basename = parts[-1]
+    if basename == "__init__.py":
+        return True
+    if any(part in _TEST_DIR_COMPONENTS for part in parts[:-1]):
+        return True
+    if any(part in _DOC_DIR_COMPONENTS for part in parts[:-1]):
+        return True
+    if "src/test/" in path:  # Java/Kotlin Maven & Gradle test source root
+        return True
+    return bool(_TEST_FILENAME_RE.match(basename))
+
+
 def _matches_key_module(filename: str, key_module: str) -> bool:
     """Odysseus's key_modules entries are descriptive strings written by
     the analysis model, not exact file paths — e.g. "common/email/
@@ -618,7 +654,12 @@ def select_significant_files(code_files: Dict[str, str], file_structures: Dict[s
     core/repo_map.py) — so per-file walkthrough calls are spent on files
     other code actually depends on, not just ones with a lot of code on
     paper. Falls back to a functions+classes count as a tie-breaker and
-    for languages/files with no graph signal.
+    for languages/files with no graph signal. Test files, doc-tooling
+    files, and bare __init__.py package markers are excluded entirely
+    (see is_low_value_for_deep_documentation) — a test file's raw
+    function count (one test suite can have dozens of test_* functions)
+    would otherwise let it crowd out a genuinely important but
+    less-called production file on the richness tie-breaker.
 
     Odysseus's own key_modules are reserved a slot FIRST (matched fuzzily
     — see _matches_key_module), before the ranking fill runs. A file
@@ -643,7 +684,9 @@ def select_significant_files(code_files: Dict[str, str], file_structures: Dict[s
         if len(significant) >= max_files:
             break
         match = next(
-            (f for f in code_files if f not in significant and _matches_key_module(f, module)), None
+            (f for f in code_files if f not in significant and not is_low_value_for_deep_documentation(f)
+             and _matches_key_module(f, module)),
+            None,
         )
         if match:
             significant.append(match)
@@ -652,7 +695,8 @@ def select_significant_files(code_files: Dict[str, str], file_structures: Dict[s
     for filename in ranked:
         if len(significant) >= max_files:
             break
-        if filename not in significant and score(filename) > (0.0, 0):
+        if (filename not in significant and score(filename) > (0.0, 0)
+                and not is_low_value_for_deep_documentation(filename)):
             significant.append(filename)
 
     return significant

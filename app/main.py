@@ -235,10 +235,12 @@ elif input_mode == "📋 View Jobs":
                         st.success("✅ Analysis Complete")
                         coverage = job.analysis.get("coverage")
                         if coverage:
+                            eligible = coverage.get("eligible_files", coverage["total_files"])
                             st.caption(
-                                f"📈 Coverage: {coverage['files_fully_documented']}/{coverage['total_files']} "
-                                f"files fully documented ({coverage['coverage_pct']}%) — the rest appear only "
-                                "in the Repository Structure tree."
+                                f"📈 Coverage: {coverage['files_fully_documented']}/{eligible} eligible files "
+                                f"fully documented ({coverage['coverage_pct']}%) — {coverage['total_files']} "
+                                "files total; tests, docs, and `__init__.py` files are intentionally excluded "
+                                "from the walkthrough and still appear only in the Repository Structure tree."
                             )
                         if st.checkbox("📊 Show Analysis Results (JSON)", key=f"show_analysis_{job.job_id}"):
                             st.json(job.analysis)
