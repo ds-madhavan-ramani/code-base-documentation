@@ -18,6 +18,7 @@ from utils.prompts import (
     USER_DOCS_TAIL_SECTIONS,
     build_doc_context,
     build_sectioned_doc,
+    build_repo_structure_section,
     select_significant_files,
     identify_features,
     build_feature_map_section,
@@ -129,7 +130,7 @@ class BackgroundWorker:
 
             sections_total = 0
             if want_dev:
-                sections_total += len(DEV_DOCS_TIER1_SECTIONS) + 1 + len(significant_files) + len(DEV_DOCS_TAIL_SECTIONS)
+                sections_total += 1 + len(DEV_DOCS_TIER1_SECTIONS) + 1 + len(significant_files) + len(DEV_DOCS_TAIL_SECTIONS)
             if want_user:
                 sections_total += len(USER_DOCS_HEAD_SECTIONS) + len(features) + len(USER_DOCS_TAIL_SECTIONS)
             done = {"n": 0}
@@ -189,6 +190,12 @@ class BackgroundWorker:
         """Developer Docs: high-level flow, then feature->file map, then a
         grounded per-file walkthrough, then setup/troubleshooting."""
         try:
+            if on_step:
+                on_step("Developer docs", 1, 1, "Repository Structure")
+            repo_structure = build_repo_structure_section(
+                self.ollama, self.dev_model, context, code_files, file_structures, significant_files,
+                context_length=8192,
+            )
             tier1 = build_sectioned_doc(
                 self.ollama, self.dev_model, DEV_DOCS_TIER1_SECTIONS, context, context_length=8192,
                 on_section=lambda i, t, title: on_step and on_step("Developer docs", i, t, title)
@@ -207,6 +214,7 @@ class BackgroundWorker:
                 on_section=lambda i, t, title: on_step and on_step("Developer docs", i, t, title)
             )
             body = "\n\n".join([
+                "## Repository Structure\n\n" + repo_structure,
                 tier1,
                 "## Feature → File Map\n\n" + feature_map,
                 "## Per-File Code Walkthrough\n\n" + walkthroughs,
