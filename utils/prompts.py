@@ -96,6 +96,110 @@ def _safe_generate(ollama_client, model: str, prompt: str, context_length: int, 
         return f"_(Generation failed for this section — {e})_"
 
 # --------------------------------------------------------------------------
+# Repository Structure: a real directory tree, built deterministically from
+# the actual file list (zero hallucination risk on structure), annotated
+# with one grounded LLM call for one-line purpose comments on files that
+# matter — mapped by exact file path so a comment can never land on the
+# wrong file or corrupt the tree itself.
+# --------------------------------------------------------------------------
+
+def _build_tree_lines(code_files: Dict[str, str]) -> List[tuple]:
+    """Renders the real file list as `tree`-style lines. Returns
+    (rendered_line, full_path) pairs — full_path is None for directory
+    lines, since only files get purpose comments."""
+    root: dict = {}
+    for path in sorted(code_files.keys()):
+        parts = path.split("/")
+        node = root
+        for part in parts[:-1]:
+            node = node.setdefault(part, {})
+        node[parts[-1]] = None
+
+    results = []
+
+    def render(node: dict, prefix: str, path_prefix: str):
+        entries = sorted(node.items(), key=lambda kv: (kv[1] is None, kv[0]))
+        for index, (name, child) in enumerate(entries):
+            is_last = index == len(entries) - 1
+            connector = "└── " if is_last else "├── "
+            is_file = child is None
+            full_path = f"{path_prefix}{name}" if is_file else None
+            suffix = "" if is_file else "/"
+            results.append((f"{prefix}{connector}{name}{suffix}", full_path))
+            if not is_file:
+                extension = "    " if is_last else "│   "
+                render(child, prefix + extension, f"{path_prefix}{name}/")
+
+    render(root, "", "")
+    return results
+
+
+def build_repo_tree(code_files: Dict[str, str]) -> str:
+    """A real, deterministic directory tree from the actual uploaded/cloned
+    files — no LLM involved, so it can't drop, invent, or misplace a file."""
+    return "\n".join(line for line, _ in _build_tree_lines(code_files))
+
+
+def identify_repo_structure_comments(ollama_client, model: str, context: dict,
+                                      significant_files: List[str], file_structures: Dict[str, dict],
+                                      context_length: int = 8192) -> Dict[str, str]:
+    """One grounded call: a short one-line purpose comment for each
+    significant file, like an annotated `tree` listing. Grounded only in
+    real function/class names — files not covered here simply get no
+    comment rather than an invented one."""
+    file_summary = "\n".join(
+        f"- {f}: functions={file_structures.get(f, {}).get('functions', [])[:8]}, "
+        f"classes={file_structures.get(f, {}).get('classes', [])[:8]}"
+        for f in significant_files
+    )[:4000]
+
+    prompt = f"""Project: {context['repo_name']}
+Architecture: {context['architecture']}
+
+Real files and the real functions/classes found in them:
+{file_summary}
+
+For EACH file listed above, write a short one-line purpose comment (like
+you'd see next to a file in an annotated directory tree, e.g. "Streamlit
+web interface" or "Job queue management") — grounded ONLY in the real
+functions/classes given for that file. Do not invent a purpose for a file
+you have no real signal for.
+
+Respond with JSON only, no markdown fence:
+{{"comments": {{"exact/file/path.py": "short one-line comment", ...}}}}
+
+{ANTI_HALLUCINATION_NOTE}"""
+
+    raw = _safe_generate(ollama_client, model, prompt, context_length, "repo structure comments")
+    try:
+        start, end = raw.find("{"), raw.rfind("}") + 1
+        data = json.loads(raw[start:end]) if start >= 0 and end > start else {}
+        comments = data.get("comments") or {}
+        if isinstance(comments, dict):
+            return {k: v for k, v in comments.items() if isinstance(v, str)}
+    except (json.JSONDecodeError, ValueError) as e:
+        logger.warning(f"Could not parse repo structure comments JSON: {e}")
+    return {}
+
+
+def build_repo_structure_section(ollama_client, model: str, context: dict, code_files: Dict[str, str],
+                                  file_structures: Dict[str, dict], significant_files: List[str],
+                                  context_length: int = 8192) -> str:
+    """Real directory tree (deterministic) plus short purpose comments on
+    the files that matter (one grounded call, JSON-mapped by exact path so
+    a comment can't land on the wrong file or corrupt the tree)."""
+    lines = _build_tree_lines(code_files)
+    comments = identify_repo_structure_comments(
+        ollama_client, model, context, significant_files, file_structures, context_length
+    )
+    annotated = [
+        f"{line}  # {comments[path]}" if path and path in comments else line
+        for line, path in lines
+    ]
+    return "```\n" + "\n".join(annotated) + "\n```"
+
+
+# --------------------------------------------------------------------------
 # Tier 1: whole-document, fixed sections (grounded in the Odysseus analysis
 # summary — architecture, patterns, dependencies — not per-file source).
 # --------------------------------------------------------------------------

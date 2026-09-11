@@ -160,12 +160,16 @@ flowchart TD
     CTX --> SIG
     SIG --> FEAT["identify_features()<br/>ONE call — features named only from real files/functions given"]
 
+    CF --> TREE["build_repo_tree()<br/>deterministic directory tree — no LLM, can't drop/misplace a file"]
+    SIG --> RSTRUCT["Repository Structure: real tree<br/>+ ONE call for one-line purpose comments,<br/>JSON-mapped by exact file path"]
+    TREE --> RSTRUCT
     CTX --> T1["Tier 1: Big Picture, How It's Put Together,<br/>Architecture & Patterns"]
     FEAT --> T2["Tier 2: Feature → File Map<br/>ONE call, grounded in real features"]
     SIG --> T3["Tier 3: Per-File Walkthrough<br/>ONE call PER significant file,<br/>given that file's real source code"]
     CTX --> TAIL["Tail: Setup, Troubleshooting<br/>(real repo_url + dependencies)"]
 
-    T1 --> DEV["DEVELOPER_DOCS.md"]
+    RSTRUCT --> DEV["DEVELOPER_DOCS.md"]
+    T1 --> DEV
     T2 --> DEV
     T3 --> DEV
     TAIL --> DEV
@@ -176,13 +180,21 @@ flowchart TD
     UFEAT --> USER
 ```
 
-**Developer Docs** follow the structure of the diagram above: a high-level
-flow (Tier 1), then a **Feature → File Map** saying what to touch to extend
-each real feature, then a **Per-File Code Walkthrough** — one Ollama call
-per significant source file (ranked by real function/class count, capped at
-`DEV_DOCS_MAX_FILES`, default 12; override via env var) — with that file's
-actual source in the prompt, so the model explains code it's genuinely
-looking at rather than inventing a plausible-sounding function name.
+**Developer Docs** open with a **Repository Structure** section: a real
+directory tree built deterministically in Python from the actual file
+list (`build_repo_tree()` — zero hallucination risk, since no model ever
+has to reproduce a 194-file tree verbatim), annotated with one grounded
+Ollama call for short one-line purpose comments on the files that matter
+(e.g. `app/main.py  # Streamlit web interface`) — mapped back onto the
+tree by exact file path, never by fuzzy name matching, so a comment can't
+land on the wrong file. Then the structure of the diagram above continues:
+a high-level flow (Tier 1), a **Feature → File Map** saying what to touch
+to extend each real feature, then a **Per-File Code Walkthrough** — one
+Ollama call per significant source file (ranked by real function/class
+count, capped at `DEV_DOCS_MAX_FILES`, default 12; override via env var) —
+with that file's actual source in the prompt, so the model explains code
+it's genuinely looking at rather than inventing a plausible-sounding
+function name.
 
 **User Guide** shares the same `identify_features()` call as the dev docs —
 so both documents describe a consistent set of real capabilities — and
@@ -198,7 +210,7 @@ content in front of it still invents things. The fix is the grounding, not
 who's doing the writing.)
 
 The trade-off: many more Ollama calls per document than a single-shot
-prompt — roughly `6 + significant_files` for Dev Docs and `3 + features`
+prompt — roughly `7 + significant_files` for Dev Docs and `3 + features`
 for the User Guide — so generation takes noticeably longer. Both Local
 Upload and GitHub Repository submit into the same background job queue
 (`core/background_worker.py`) rather than blocking the page, so a large
