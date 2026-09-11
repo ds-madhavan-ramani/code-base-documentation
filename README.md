@@ -797,7 +797,30 @@ Each project generates:
   into a ~60-entry sidebar of mostly-identical labels.
 - `USER_GUIDE.md` - User-friendly guide
 - `USER_GUIDE.html` - Navigable HTML version, same layout as above
-- `metadata.json` - Analysis metadata
+- `metadata.json` - The saved Odysseus analysis for the project (architecture,
+  dependencies, patterns, `key_modules`, `user_context`, ...), plus two
+  fields recorded at doc-generation time:
+  - `coverage` — `total_files`, `files_fully_documented`, and
+    `coverage_pct`. `select_significant_files()` walks through only a
+    capped subset of files (`DEV_DOCS_MAX_FILES`, default 12) on a large
+    repo, so most files appear only as a line in the Repository Structure
+    tree, not a full walkthrough — this makes that ratio visible instead
+    of implicit (shown in the View Jobs page too).
+  - `documented_files` / `identified_features` — exactly which files got a
+    full walkthrough and which features were identified, so it's possible
+    to tell precisely what the generated docs did and didn't cover.
+
+  This file also enables **doc-only regeneration**: the "🔄 Regenerate
+  Docs (skip re-analysis)" button in View Jobs creates a new job with
+  `use_cached_analysis=True`, which makes `BackgroundWorker._process_job`
+  load this file (`DocumentationGenerator.load_metadata()`) instead of
+  re-running Odysseus's deep-analysis pass — by far the slowest step
+  (multi-turn Harness call, `ODYSSEUS_MAX_TURNS`/`ODYSSEUS_BUDGET_TOKENS`
+  turns/tokens). Useful for iterating on doc templates/prompts without
+  paying that cost again; it does NOT re-inspect the source, so a real
+  code change needs an ordinary (non-cached) run to be reflected. Falls
+  back to a full analysis automatically if no `metadata.json` exists yet
+  for that project name.
 
 ---
 

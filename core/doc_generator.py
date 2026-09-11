@@ -2,6 +2,7 @@ import json
 import shutil
 from markdown import Markdown, markdown as md_convert
 from pathlib import Path
+from typing import Optional
 import logging
 
 logger = logging.getLogger(__name__)
@@ -266,6 +267,21 @@ class DocumentationGenerator:
     def output_dir_for(self, repo_name: str) -> Path:
         """Absolute path where a project's generated files are persisted."""
         return self.output_dir / repo_name
+
+    def load_metadata(self, repo_name: str) -> Optional[dict]:
+        """Load a previous run's saved analysis (metadata.json) for a
+        project, if one exists. Lets a doc-only regeneration reuse what
+        Odysseus's deep-analysis pass already concluded about the
+        codebase instead of re-running that slow (multi-turn) step just
+        to pick up a template/prompt change."""
+        path = self.output_dir_for(repo_name) / "metadata.json"
+        if not path.exists():
+            return None
+        try:
+            return json.loads(path.read_text())
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning(f"Could not load cached metadata for {repo_name}: {e}")
+            return None
 
     def list_output_files(self, repo_name: str) -> list:
         """Every file actually saved for a project, for display/download."""

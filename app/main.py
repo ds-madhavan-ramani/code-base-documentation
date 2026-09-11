@@ -1,4 +1,5 @@
 import streamlit as st
+import json
 import os
 import sys
 import tempfile
@@ -232,6 +233,13 @@ elif input_mode == "📋 View Jobs":
                     # Show analysis results
                     if job.analysis:
                         st.success("✅ Analysis Complete")
+                        coverage = job.analysis.get("coverage")
+                        if coverage:
+                            st.caption(
+                                f"📈 Coverage: {coverage['files_fully_documented']}/{coverage['total_files']} "
+                                f"files fully documented ({coverage['coverage_pct']}%) — the rest appear only "
+                                "in the Repository Structure tree."
+                            )
                         if st.checkbox("📊 Show Analysis Results (JSON)", key=f"show_analysis_{job.job_id}"):
                             st.json(job.analysis)
 
@@ -247,6 +255,28 @@ elif input_mode == "📋 View Jobs":
                                     f"{job.repo_name}_{output_file.name}",
                                     key=f"dl_{job.job_id}_{output_file.name}"
                                 )
+
+                    if doc_gen.load_metadata(job.repo_name) is not None:
+                        st.caption(
+                            "🔄 Regenerate re-runs only the documentation-writing step, reusing the saved "
+                            "analysis above — use it after a template/prompt change, not a code change "
+                            "(it will NOT pick up edits to the source itself)."
+                        )
+                        if st.button("🔄 Regenerate Docs (skip re-analysis)", key=f"regen_{job.job_id}"):
+                            try:
+                                if job.source_type == "upload":
+                                    source = json.loads(Path(job.source).read_text())
+                                else:
+                                    source = job.source
+                                new_job = job_queue.create_job(
+                                    job.repo_name, job.source_type, source,
+                                    doc_type=job.doc_type, user_context=job.user_context,
+                                    use_cached_analysis=True,
+                                )
+                                st.success(f"✅ Regeneration job submitted! ID: `{new_job.job_id}`")
+                                st.rerun()
+                            except (OSError, json.JSONDecodeError) as e:
+                                st.error(f"Could not reuse this job's original source: {e}")
 
         if selected_for_deletion:
             st.divider()
