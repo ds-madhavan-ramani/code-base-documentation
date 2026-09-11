@@ -40,7 +40,8 @@ ANTI_HALLUCINATION_NOTE = (
 
 # How many source files get their own dedicated walkthrough call in the
 # Developer Docs. Override via env var for very large or very small repos.
-MAX_WALKTHROUGH_FILES = 150 # int(os.environ.get("DEV_DOCS_MAX_FILES", "12"))
+MAX_WALKTHROUGH_FILES = 425 #int(os.environ.get("DEV_DOCS_MAX_FILES", "12"))
+=======
 MAX_CHARS_PER_WALKTHROUGH_FILE = 6000
 
 # identify_features() only needs a short JSON call, not one call per file
@@ -52,9 +53,29 @@ MAX_CHARS_PER_WALKTHROUGH_FILE = 6000
 # file wasn't in the pool the model was choosing from.
 MAX_FEATURE_CANDIDATE_FILES = int(os.environ.get("DEV_DOCS_MAX_FEATURE_FILES", "40"))
 
+# build_file_walkthrough_sections can batch several files into one Ollama
+# call instead of one call per file -- otherwise documenting an entire
+# large repo (as opposed to a capped "significant" subset) needs an
+# impractical number of calls. Defaults to 1 (today's exact
+# one-call-per-file behavior, zero change unless explicitly raised).
+# MAX_CHARS_PER_BATCHED_FILE is deliberately smaller than
+# MAX_CHARS_PER_WALKTHROUGH_FILE since several files now share one
+# context window instead of having it to themselves.
+WALKTHROUGH_BATCH_SIZE = 5  # int(os.environ.get("DEV_DOCS_WALKTHROUGH_BATCH_SIZE", "1"))
+MAX_CHARS_PER_BATCHED_FILE = int(os.environ.get("DEV_DOCS_MAX_CHARS_PER_BATCHED_FILE", "2500"))
+
+# How many files share one Repository Structure comment call. Unlike the
+# walkthrough (which only covers a capped, ranked subset), this always
+# runs across every real file that has any function/class signal to
+# ground a comment in -- a single short JSON call per batch is cheap
+# enough to give the WHOLE repo real, one-line coverage regardless of how
+# high or low the walkthrough's own cap is set.
+REPO_COMMENT_BATCH_SIZE = int(os.environ.get("DEV_DOCS_REPO_COMMENT_BATCH_SIZE", "40"))
+
 _LEADING_HEADING_RE = re.compile(r"^#{1,6}[ \t].*\n+", re.MULTILINE)
 _HEADING_LINE_RE = re.compile(r"^(#{1,6})([ \t].*)$", re.MULTILINE)
 _LEADING_BOLD_RE = re.compile(r"^\*\*([^\n*]+)\*\*[ \t]*\n+")
+_FILE_DELIM_RE = re.compile(r"^===FILE:\s*(.+?)\s*===[ \t]*$", re.MULTILINE)
 
 
 def _strip_leading_heading(text: str) -> str:
@@ -181,17 +202,20 @@ def build_repo_tree(code_files: Dict[str, str]) -> str:
 
 
 def identify_repo_structure_comments(ollama_client, model: str, context: dict,
-                                      significant_files: List[str], file_structures: Dict[str, dict],
-                                      context_length: int = 8192) -> Dict[str, str]:
-    """One grounded call: a short one-line purpose comment for each
-    significant file, like an annotated `tree` listing. Grounded only in
-    real function/class names — files not covered here simply get no
-    comment rather than an invented one."""
+                                      files: List[str], file_structures: Dict[str, dict],
+                                      context_length: int = 8192, max_chars: int = 12000) -> Dict[str, str]:
+    """One grounded call: a short one-line purpose comment for each file
+    given, like an annotated `tree` listing. Grounded only in real
+    function/class names — files not covered here simply get no comment
+    rather than an invented one. Called once per batch (see
+    build_repo_structure_section) rather than once for the whole repo, so
+    max_chars is generous relative to a single call's context_length but
+    still bounded."""
     file_summary = "\n".join(
         f"- {f}: functions={file_structures.get(f, {}).get('functions', [])[:8]}, "
         f"classes={file_structures.get(f, {}).get('classes', [])[:8]}"
-        for f in significant_files
-    )[:4000]
+        for f in files
+    )[:max_chars]
 
     prompt = f"""Project: {context['repo_name']}
 Architecture: {context['architecture']}
@@ -224,14 +248,36 @@ Respond with JSON only, no markdown fence:
 
 def build_repo_structure_section(ollama_client, model: str, context: dict, code_files: Dict[str, str],
                                   file_structures: Dict[str, dict], significant_files: List[str],
-                                  context_length: int = 8192) -> str:
-    """Real directory tree (deterministic) plus short purpose comments on
-    the files that matter (one grounded call, JSON-mapped by exact path so
-    a comment can't land on the wrong file or corrupt the tree)."""
+                                  context_length: int = 8192, on_batch=None) -> str:
+    """Real directory tree (deterministic) plus short purpose comments —
+    grounded, JSON-mapped by exact path so a comment can't land on the
+    wrong file or corrupt the tree.
+
+    Comments cover EVERY real file with any function/class signal, not
+    just significant_files (the walkthrough's own, much smaller, capped
+    subset) — batched across multiple calls (REPO_COMMENT_BATCH_SIZE per
+    call) so this gives complete one-line repository coverage regardless
+    of how the walkthrough's own cap is set, at a fraction of the cost of
+    a full walkthrough per file. A file with no real signal at all is
+    never sent to the model (nothing groundable to say about it), so it
+    simply keeps its plain tree line, same as always.
+    """
     lines = _build_tree_lines(code_files)
-    comments = identify_repo_structure_comments(
-        ollama_client, model, context, significant_files, file_structures, context_length
-    )
+    commentable = [
+        path for _, path in lines
+        if path and (file_structures.get(path, {}).get("functions")
+                      or file_structures.get(path, {}).get("classes"))
+    ]
+    batches = [commentable[i:i + REPO_COMMENT_BATCH_SIZE] for i in range(0, len(commentable), REPO_COMMENT_BATCH_SIZE)]
+
+    comments: Dict[str, str] = {}
+    for index, batch in enumerate(batches, start=1):
+        if on_batch:
+            on_batch(index, len(batches))
+        comments.update(
+            identify_repo_structure_comments(ollama_client, model, context, batch, file_structures, context_length)
+        )
+
     annotated = [
         f"{line}  # {comments[path]}" if path and path in comments else line
         for line, path in lines
@@ -329,13 +375,21 @@ Format: Markdown, 2-4 short paragraphs. Do not add a heading, one will be added.
 Notes on how the pieces fit together, from analysis:
 {how_it_works}
 
-File tree:
-{file_tree}
+Real files confirmed to exist in this repository (the ONLY file paths you
+may state exactly):
+{significant_files}
+
+Odysseus's own descriptive notes on key modules — these may abbreviate or
+approximate a file's actual path, so do not quote an exact path from here
+unless it also appears in the real files list above:
+{key_modules}
 
 Write a "How It's Put Together" section explaining how the pieces fit
 together to produce the big picture above — name real files/modules and
 trace how they connect and hand off to each other (calls, data, control
-flow).
+flow). Only state an exact file path that appears in the real files list
+above; if you want to reference something only described in the key
+modules notes, describe it by name/role rather than inventing its path.
 
 Format: Markdown. A short bullet list of file/module -> responsibility,
 then 1-2 paragraphs on how they interact. Do not add a heading, one will be added.""",
@@ -484,7 +538,10 @@ def build_doc_context(analysis: dict, repo_url: Optional[str] = None,
 
     `file_structures`/`significant_files`, when given, ground the Common
     Tasks section in real per-file signatures (see _real_code_touchpoints)
-    instead of leaving it with only a dependency-name list to work from.
+    and "How It's Put Together" in verified real paths, instead of
+    leaving those sections with only Odysseus's own (sometimes
+    inaccurate or truncated — see build_repo_structure_section's file
+    argument vs. analysis["file_tree"]) summary text to work from.
     """
     resolved_repo_url = (
         repo_url
@@ -505,6 +562,7 @@ def build_doc_context(analysis: dict, repo_url: Optional[str] = None,
         "how_it_works": analysis.get("how_it_works", ""),
         "user_context": analysis.get("user_context") or "(not provided)",
         "modules": ", ".join(analysis.get("key_modules", [])[:5]),
+        "significant_files": json.dumps(significant_files) if significant_files else "[]",
         "real_code_touchpoints": (
             _real_code_touchpoints(file_structures, significant_files)
             if file_structures and significant_files
@@ -674,22 +732,67 @@ heading, one will be added.
                            min_heading_level=3)
 
 
+def _split_batched_response(raw: str, filenames: List[str]) -> Dict[str, str]:
+    """Splits a batched multi-file walkthrough response on its own
+    literal `===FILE: <name>===` delimiter lines.
+
+    Delimiter-based splitting rather than JSON: a model asked to fit
+    multi-paragraph Markdown — fenced code blocks, nested lists, quotes —
+    inside a JSON string value routinely produces invalid or truncated
+    JSON (escaping backticks/newlines/quotes correctly across a long
+    response is a well-known failure mode). A plain literal delimiter has
+    no escaping to get wrong.
+
+    Returns {filename: body} only for files whose delimiter was found and
+    recognized (exact match, or a path-suffix match in case the model
+    reformats/abbreviates the filename slightly) — a file missing from
+    the response is simply absent from the result rather than losing the
+    whole batch; the caller fills it with a placeholder.
+    """
+    matches = list(_FILE_DELIM_RE.finditer(raw))
+    if not matches:
+        return {}
+    result: Dict[str, str] = {}
+    for index, match in enumerate(matches):
+        start = match.end()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(raw)
+        raw_name = match.group(1).strip().strip("`")
+        body = raw[start:end].strip()
+        target = raw_name if raw_name in filenames else next(
+            (f for f in filenames if f.endswith(raw_name) or raw_name.endswith(f)), None
+        )
+        if target and body:
+            result[target] = body
+    return result
+
+
 def build_file_walkthrough_sections(ollama_client, model: str, code_files: Dict[str, str],
                                      file_structures: Dict[str, dict], significant_files: List[str],
                                      context: dict, context_length: int = 8192,
                                      max_chars_per_file: int = MAX_CHARS_PER_WALKTHROUGH_FILE,
-                                     on_file=None) -> str:
-    """Tier 3 (Developer Docs): one call per significant file, grounded in
-    that file's real source — the model can't invent a function it's
-    literally looking at."""
+                                     max_chars_per_batched_file: int = MAX_CHARS_PER_BATCHED_FILE,
+                                     batch_size: int = WALKTHROUGH_BATCH_SIZE, on_file=None) -> str:
+    """Tier 3 (Developer Docs): grounded per-file walkthroughs.
+
+    With batch_size=1 (the default), this is exactly one call per file,
+    unchanged from before. With batch_size>1, several files share one
+    call (see _split_batched_response) — the only practical way to reach
+    "document the entire repo" instead of a small capped subset: 425
+    files at 1 file/call is 425 calls, but at 5 files/call it's ~85,
+    while each real file still gets its own real, grounded walkthrough
+    rather than a generic summary. A parse failure for one batch produces
+    a placeholder for just that batch's files, never an exception that
+    would discard every other file's already-generated walkthrough."""
     total = len(significant_files)
-    parts = []
-    for index, filename in enumerate(significant_files, start=1):
-        if on_file:
-            on_file(index, total, filename)
-        content = code_files.get(filename, "")[:max_chars_per_file]
-        structure = file_structures.get(filename, {})
-        prompt = f"""Project: {context['repo_name']}
+    parts: List[str] = []
+
+    if batch_size <= 1:
+        for index, filename in enumerate(significant_files, start=1):
+            if on_file:
+                on_file(index, total, filename)
+            content = code_files.get(filename, "")[:max_chars_per_file]
+            structure = file_structures.get(filename, {})
+            prompt = f"""Project: {context['repo_name']}
 File: {filename}
 
 Real functions detected in this file: {structure.get('functions', [])}
@@ -709,11 +812,58 @@ code above — do not invent ones that aren't in it.
 Format: Markdown, no top-level heading (one will be added).
 
 {ANTI_HALLUCINATION_NOTE}"""
-        # Wrapped at "### `filename`" (level 3) -> internal sub-structure
-        # (Key Functions, Imports, ...) should nest at >=4.
-        body = _safe_generate(ollama_client, model, prompt, context_length, filename,
-                               min_heading_level=4)
-        parts.append(f"### `{filename}`\n\n{body}")
+            # Wrapped at "### `filename`" (level 3) -> internal sub-structure
+            # (Key Functions, Imports, ...) should nest at >=4.
+            body = _safe_generate(ollama_client, model, prompt, context_length, filename,
+                                   min_heading_level=4)
+            parts.append(f"### `{filename}`\n\n{body}")
+        return "\n\n".join(parts)
+
+    batches = [significant_files[i:i + batch_size] for i in range(0, len(significant_files), batch_size)]
+    done = 0
+    for batch in batches:
+        file_blocks = []
+        for filename in batch:
+            content = code_files.get(filename, "")[:max_chars_per_batched_file]
+            structure = file_structures.get(filename, {})
+            file_blocks.append(f"""===FILE: {filename}===
+Real functions detected in this file: {structure.get('functions', [])}
+Real classes detected in this file: {structure.get('classes', [])}
+Real imports detected in this file: {structure.get('imports', [])}
+
+Actual source code of this file:
+```
+{content}
+```""")
+        prompt = f"""Project: {context['repo_name']}
+
+You will explain MULTIPLE files below, one at a time, for a developer who
+needs to extend each one: what it does, how its key functions/classes
+work, and what to watch out for when modifying it. Ground every
+function/class name you mention in that file's own real code — do not
+invent ones that aren't in it, and do not mix up details between files.
+
+{chr(10).join(file_blocks)}
+
+Respond with one section per file above, IN THE SAME ORDER, each
+introduced by EXACTLY a line of the form (no markdown heading, just this
+literal text, so the response can be split programmatically):
+===FILE: <exact filename as given above>===
+<your Markdown explanation of that file, no top-level heading>
+
+{ANTI_HALLUCINATION_NOTE}"""
+        raw = _safe_generate(ollama_client, model, prompt, context_length,
+                              f"walkthrough batch ({len(batch)} files)", min_heading_level=4)
+        per_file = _split_batched_response(raw, batch)
+        for filename in batch:
+            done += 1
+            if on_file:
+                on_file(done, total, filename)
+            body = per_file.get(filename) or (
+                "_(No walkthrough returned for this file — it shared a batched call whose "
+                "response could not be split by file. Try a smaller DEV_DOCS_WALKTHROUGH_BATCH_SIZE.)_"
+            )
+            parts.append(f"### `{filename}`\n\n{body}")
     return "\n\n".join(parts)
 
 

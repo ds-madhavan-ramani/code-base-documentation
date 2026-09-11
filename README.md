@@ -184,18 +184,43 @@ flowchart TD
 **Developer Docs** open with a **Repository Structure** section: a real
 directory tree built deterministically in Python from the actual file
 list (`build_repo_tree()` — zero hallucination risk, since no model ever
-has to reproduce a 194-file tree verbatim), annotated with one grounded
-Ollama call for short one-line purpose comments on the files that matter
-(e.g. `app/main.py  # Streamlit web interface`) — mapped back onto the
-tree by exact file path, never by fuzzy name matching, so a comment can't
-land on the wrong file. Then the structure of the diagram above continues:
-a high-level flow (Tier 1), a **Feature → File Map** saying what to touch
-to extend each real feature, then a **Per-File Code Walkthrough** — one
-Ollama call per significant source file (ranked by real function/class
-count, capped at `DEV_DOCS_MAX_FILES`, default 12; override via env var) —
-with that file's actual source in the prompt, so the model explains code
-it's genuinely looking at rather than inventing a plausible-sounding
-function name.
+has to reproduce a 194-file tree verbatim), annotated with grounded
+one-line purpose comments — batched across multiple calls
+(`DEV_DOCS_REPO_COMMENT_BATCH_SIZE`, default 40 files/call) so this
+covers **every** real file in the repo, not just the ones picked for a
+full walkthrough — mapped back onto the tree by exact file path, never by
+fuzzy name matching, so a comment can't land on the wrong file. Then the
+structure of the diagram above continues: a high-level flow (Tier 1), a
+**Feature → File Map** saying what to touch to extend each real feature,
+then a **Per-File Code Walkthrough** — one Ollama call per significant
+source file (ranked by real function/class count, capped at
+`DEV_DOCS_MAX_FILES`, default 12; override via env var) — with that
+file's actual source in the prompt, so the model explains code it's
+genuinely looking at rather than inventing a plausible-sounding function
+name.
+
+**Documenting an entire large repo, not just a capped subset**: raising
+`DEV_DOCS_MAX_FILES` to (or past) the repo's real file count gets every
+file a full walkthrough, but at one Ollama call per file that's
+impractical past a few dozen files. `DEV_DOCS_WALKTHROUGH_BATCH_SIZE`
+(default 1, today's exact one-call-per-file behavior) batches several
+files into a single call instead — e.g. 425 files at 5 files/call is ~85
+calls rather than 425, each file still getting its own real, grounded
+walkthrough rather than a generic summary. The model is asked to
+introduce each file's section with a literal `===FILE: <name>===`
+delimiter line so the response can be split back into per-file sections
+programmatically — chosen over asking for JSON-per-file, since fitting
+multi-paragraph Markdown (fenced code, nested lists, quotes) inside a
+JSON string value is a common source of invalid/truncated JSON. If a
+batch's response can't be split (the model ignores the delimiter format),
+every file in that one batch gets a placeholder rather than losing
+already-generated batches or crashing the whole run; a smaller batch size
+usually resolves it. Both this and the repo-structure comment batching
+are pure Python default-parameter values evaluated at import time — like
+`DEV_DOCS_MAX_FILES` itself, changing the env var requires restarting the
+Streamlit process (not just a code pull, and not the in-app "Regenerate
+Docs" button) to take effect, since the already-running process never
+re-imports an already-imported module.
 
 **User Guide** shares the same `identify_features()` call as the dev docs —
 so both documents describe a consistent set of real capabilities — and
@@ -253,6 +278,17 @@ output against an actual 194-file Java/Spring codebase:
   discourage it) and output level (`_strip_leaked_internal_section()`
   strips any such heading and the list under it, as a second line of
   defense regardless of prompt wording).
+- **How It's Put Together** used to be grounded in Odysseus's own
+  `analysis["file_tree"]` field — a summary the analysis model writes
+  itself, which turned out to be truncated to a short prefix of the real
+  file list on a 425-file repo. On that repo this produced a fabricated
+  path, `celery/app/beat.py` (the real files are `celery/beat.py` and
+  `celery/apps/beat.py` — note `apps/`, not `app/`), because the model
+  never actually saw the real path in its truncated context and filled
+  the gap from general knowledge of the project. This section is now
+  grounded in `significant_files` — the same verified, real path list
+  already computed for the walkthrough — with an explicit instruction to
+  only state a path that appears in it.
 
 This is a deterministic Python-level orchestrator (a plain loop assigning
 one Ollama call per file/feature), not an LLM deciding on its own how to
