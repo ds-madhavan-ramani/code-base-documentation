@@ -268,8 +268,12 @@ output against an actual 194-file Java/Spring codebase:
   key_modules fix above was written to surface).
 - Both documents now catch a model restating its own section title as a
   **bold paragraph** (e.g. a "**How It's Put Together**" line directly
-  under the real heading) — the existing dedup only caught a restated
-  literal `#` heading, not this form (`_strip_restated_bold_title`).
+  under the real heading) or as **bare plain text** (e.g. a "Task Queuing
+  and Scheduling" line with no bold markers at all, observed in a real
+  User Guide run) — the existing dedup only caught a restated literal `#`
+  heading, not either of these forms (`_strip_restated_title()`, matched
+  only on an exact line match against the known title so a real opening
+  sentence is never touched).
 - The User Guide's per-feature prompt gives real function/class names as
   background grounding only, but a model would sometimes echo that
   grounding back verbatim as its own "Real Capability Signals" heading
