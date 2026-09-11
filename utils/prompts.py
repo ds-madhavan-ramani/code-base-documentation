@@ -40,7 +40,7 @@ ANTI_HALLUCINATION_NOTE = (
 
 # How many source files get their own dedicated walkthrough call in the
 # Developer Docs. Override via env var for very large or very small repos.
-MAX_WALKTHROUGH_FILES = int(os.environ.get("DEV_DOCS_MAX_FILES", "12"))
+MAX_WALKTHROUGH_FILES = 150 # int(os.environ.get("DEV_DOCS_MAX_FILES", "12"))
 MAX_CHARS_PER_WALKTHROUGH_FILE = 6000
 
 # identify_features() only needs a short JSON call, not one call per file
