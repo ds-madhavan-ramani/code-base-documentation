@@ -42,8 +42,18 @@ ANTI_HALLUCINATION_NOTE = (
 MAX_WALKTHROUGH_FILES = int(os.environ.get("DEV_DOCS_MAX_FILES", "12"))
 MAX_CHARS_PER_WALKTHROUGH_FILE = 6000
 
+# identify_features() only needs a short JSON call, not one call per file
+# (unlike the walkthrough), so it can safely see far more candidate files
+# than MAX_WALKTHROUGH_FILES. Without this, a real feature whose file
+# ranks just outside the (small) walkthrough cut gets wrongly pinned to
+# an unrelated file that did make the cut — e.g. an "Email Notifications"
+# feature landing on a network-map file because the real email service
+# file wasn't in the pool the model was choosing from.
+MAX_FEATURE_CANDIDATE_FILES = int(os.environ.get("DEV_DOCS_MAX_FEATURE_FILES", "40"))
+
 _LEADING_HEADING_RE = re.compile(r"^#{1,6}[ \t].*\n+", re.MULTILINE)
 _HEADING_LINE_RE = re.compile(r"^(#{1,6})([ \t].*)$", re.MULTILINE)
+_LEADING_BOLD_RE = re.compile(r"^\*\*([^\n*]+)\*\*[ \t]*\n+")
 
 
 def _strip_leading_heading(text: str) -> str:
@@ -59,9 +69,34 @@ def _strip_leading_heading(text: str) -> str:
     return stripped
 
 
-def _normalize_headings(text: str, min_level: int = 3) -> str:
-    """Strips a restated leading title (see _strip_leading_heading), then
-    clamps any OTHER heading the model added mid-body to at least
+def _normalize_title_text(text: str) -> str:
+    text = text.strip().strip("`").rstrip(":").strip()
+    text = text.replace("->", "→")
+    return " ".join(text.lower().split())
+
+
+def _strip_restated_bold_title(text: str, title: str) -> str:
+    """Models sometimes restate their own section title as a bold
+    paragraph instead of literal '#' heading syntax (which
+    _strip_leading_heading already catches) — e.g. a "**How It's Put
+    Together**" paragraph directly under the real heading we already add.
+    Strips it only on an exact (case/punctuation-insensitive) match
+    against the known title or its basename, so a legitimate short bold
+    lead-in sentence is never touched."""
+    match = _LEADING_BOLD_RE.match(text)
+    if not match:
+        return text
+    candidate = _normalize_title_text(match.group(1))
+    known_titles = {_normalize_title_text(title), _normalize_title_text(title.rsplit("/", 1)[-1])}
+    if candidate in known_titles:
+        return text[match.end():].lstrip()
+    return text
+
+
+def _normalize_headings(text: str, min_level: int = 3, title: Optional[str] = None) -> str:
+    """Strips a restated leading title (as a heading or as a bold
+    paragraph — see _strip_leading_heading/_strip_restated_bold_title),
+    then clamps any OTHER heading the model added mid-body to at least
     min_level. Models routinely give internal sub-structure like "Key
     Functions" a heading level with no regard for what it's nested under
     (e.g. "## Key Functions" inside a file walkthrough already wrapped in
@@ -69,6 +104,8 @@ def _normalize_headings(text: str, min_level: int = 3) -> str:
     Clamping (not stripping) preserves the sub-structure, just nests it
     correctly."""
     text = _strip_leading_heading(text)
+    if title:
+        text = _strip_restated_bold_title(text, title)
 
     def clamp(match: "re.Match") -> str:
         hashes, rest = match.group(1), match.group(2)
@@ -87,10 +124,12 @@ def _safe_generate(ollama_client, model: str, prompt: str, context_length: int, 
     discards every section already generated in the same document. Also
     normalizes any heading the model wrote to nest under min_heading_level
     (see _normalize_headings) — the model doesn't know how deep its output
-    will be wrapped, so it can't be trusted to pick a compatible level."""
+    will be wrapped, so it can't be trusted to pick a compatible level.
+    `label` doubles as the section's own display title at every call site
+    in this module, so it's also used to catch a restated bold title."""
     try:
         text = ollama_client.generate(model, prompt, context_length=context_length).strip()
-        return _normalize_headings(text, min_heading_level)
+        return _normalize_headings(text, min_heading_level, title=label)
     except Exception as e:
         logger.error(f"Generation failed for {label}: {e}")
         return f"_(Generation failed for this section — {e})_"
@@ -200,6 +239,56 @@ def build_repo_structure_section(ollama_client, model: str, context: dict, code_
 
 
 # --------------------------------------------------------------------------
+# Real-code grounding for the Common Tasks section, which otherwise only
+# sees a dependency-name list and architecture prose — nothing it could
+# actually cite — and ends up inventing a plausible-looking parallel API
+# (e.g. a fabricated `com.example.common.utils.Normalise.stripAndLowercase()`
+# call contradicting the real, correctly-grounded Normalise.java walkthrough
+# a few sections earlier in the very same document).
+# --------------------------------------------------------------------------
+
+_JAVA_SRC_ROOTS = ("src/main/java/", "src/main/kotlin/", "src/test/java/", "src/test/kotlin/")
+
+
+def _infer_module_path(filename: str) -> Optional[str]:
+    """Best-effort REAL import/module path for a file, computed
+    deterministically from its actual path — never invented. Handles the
+    Java/Kotlin Maven/Gradle layout (package = directory path under
+    src/main/java) and Python's dotted-module convention; other languages
+    (JS/TS import paths depend on bundler aliases/tsconfig we don't have)
+    return None, and the prompt is told to reference the file by its real
+    path instead of guessing an import statement."""
+    normalized = filename.replace("\\", "/")
+    for root in _JAVA_SRC_ROOTS:
+        idx = normalized.find(root)
+        if idx != -1:
+            remainder = re.sub(r"\.(java|kt)$", "", normalized[idx + len(root):])
+            return remainder.replace("/", ".")
+    if normalized.endswith(".py"):
+        return normalized[:-3].replace("/", ".")
+    return None
+
+
+def _real_code_touchpoints(file_structures: Dict[str, dict], significant_files: List[str],
+                            max_files: int = 4, max_names_per_file: int = 6) -> str:
+    """A short, real grounding block: exact file path, real import/module
+    path (only when derivable, see _infer_module_path), and real
+    function/class names — so a Common Tasks code example either uses
+    something real or the prompt can tell it to describe the task in
+    prose instead of inventing a parallel fictional API."""
+    lines = []
+    for filename in significant_files[:max_files]:
+        structure = file_structures.get(filename, {})
+        names = (structure.get("classes", []) + structure.get("functions", []))[:max_names_per_file]
+        if not names:
+            continue
+        module_path = _infer_module_path(filename)
+        location = f"path: {filename}" + (f", real import path: {module_path}" if module_path else "")
+        lines.append(f"- {location} — real names: {', '.join(names)}")
+    return "\n".join(lines) if lines else "(no real per-file signatures available for this repo)"
+
+
+# --------------------------------------------------------------------------
 # Tier 1: whole-document, fixed sections (grounded in the Odysseus analysis
 # summary — architecture, patterns, dependencies — not per-file source).
 # --------------------------------------------------------------------------
@@ -300,12 +389,24 @@ Dependencies actually used by this project: {dependencies}
 Key insights from analysis:
 {key_insights}
 
+Real files, with their real import/module path (only given when it can be
+derived from the actual path — for other languages, cite the file path
+itself, never a guessed import) and real function/class names you may
+ground a code example in:
+{real_code_touchpoints}
+
 Write a "Common Tasks, Examples & Troubleshooting" section: 2-3 realistic
 usage examples for this codebase, and likely troubleshooting scenarios
 given the insights above. Code examples MUST be written in the same
 language and use the same libraries/frameworks as the dependencies listed
 above — do not default to Python (or any other language) unless that's
 actually what this project uses.
+
+If a code example references a class, method, package, or import, it MUST
+use an exact real name/path from the list above — never invent a class,
+package, or method that isn't listed there or elsewhere in this document.
+If none of the real names above fit the example you want to show, describe
+the task in prose instead of writing fabricated code.
 
 Format: Markdown. Put each code example in its own fenced code block as
 its own paragraph — never nested inside a numbered or bulleted list item,
@@ -367,8 +468,15 @@ Format: Markdown Q&A list, simple language. Do not add a heading, one will be ad
 ]
 
 
-def build_doc_context(analysis: dict, repo_url: Optional[str] = None) -> dict:
-    """Flatten an analysis dict (+ the real repo URL) into template context."""
+def build_doc_context(analysis: dict, repo_url: Optional[str] = None,
+                       file_structures: Optional[Dict[str, dict]] = None,
+                       significant_files: Optional[List[str]] = None) -> dict:
+    """Flatten an analysis dict (+ the real repo URL) into template context.
+
+    `file_structures`/`significant_files`, when given, ground the Common
+    Tasks section in real per-file signatures (see _real_code_touchpoints)
+    instead of leaving it with only a dependency-name list to work from.
+    """
     resolved_repo_url = (
         repo_url
         or analysis.get("repo_url")
@@ -388,6 +496,11 @@ def build_doc_context(analysis: dict, repo_url: Optional[str] = None) -> dict:
         "how_it_works": analysis.get("how_it_works", ""),
         "user_context": analysis.get("user_context") or "(not provided)",
         "modules": ", ".join(analysis.get("key_modules", [])[:5]),
+        "real_code_touchpoints": (
+            _real_code_touchpoints(file_structures, significant_files)
+            if file_structures and significant_files
+            else "(no real per-file signatures available for this repo)"
+        ),
     }
 
 
@@ -565,6 +678,41 @@ Format: Markdown, no top-level heading (one will be added).
     return "\n\n".join(parts)
 
 
+_USER_GUIDE_LEAK_HEADING_RE = re.compile(
+    r"^[ \t]*#{0,6}[ \t]*\**"
+    r"(real capability signals|key (?:functions|classes|methods)|"
+    r"internal (?:functions|signals|details)|implementation details)"
+    r"\**[ \t]*:?[ \t]*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _strip_leaked_internal_section(text: str) -> str:
+    """User Guide feature prompts are given real function/class names as
+    background grounding only, with an explicit "never repeat this to the
+    reader" instruction — but a model sometimes echoes that grounding back
+    verbatim anyway, as its own heading (or bold line) followed by a raw
+    method dump (e.g. "Real Capability Signals" -> getId, setId,
+    getSection1, ...). Strip such a heading/line and the list block
+    directly under it as a second line of defense — none of it belongs in
+    end-user-facing docs regardless of how the prompt is worded."""
+    lines = text.split("\n")
+    out: List[str] = []
+    skipping = False
+    for line in lines:
+        if _USER_GUIDE_LEAK_HEADING_RE.match(line):
+            skipping = True
+            continue
+        if skipping:
+            if line.strip() == "":
+                continue
+            if re.match(r"^[ \t]*([-*•]|\d+[.)])\s", line):
+                continue
+            skipping = False
+        out.append(line)
+    return "\n".join(out)
+
+
 def build_user_feature_sections(ollama_client, model: str, context: dict,
                                  features: List[Dict], context_length: int = 4096,
                                  on_feature=None) -> str:
@@ -580,14 +728,18 @@ def build_user_feature_sections(ollama_client, model: str, context: dict,
         prompt = f"""Project: {context['repo_name']}
 
 Feature: {name}
-Implemented in (for your context only, do not mention file/code details to the reader): {feature.get('files')}
-Real capability signals: {feature.get('key_functions')}
+
+(Background only, for your understanding — never repeat any of this to
+the reader, and never turn it into a heading or list of its own: this
+feature's real implementation touches {feature.get('files')} and involves
+functions/classes named {feature.get('key_functions')}.)
 
 Write a short "{name}" section for a non-technical user guide: what this
 feature does for the user and how they would use it in practice. Do not
-show code or file names to the reader — this is for end users, not
-developers. If you can't be certain of exact commands/flags, describe the
-workflow conceptually rather than inventing precise syntax.
+show code, file names, or function/method names to the reader — this is
+for end users, not developers. Never create a heading or bullet list of
+function or method names. If you can't be certain of exact commands/flags,
+describe the workflow conceptually rather than inventing precise syntax.
 
 Format: Markdown, 1-2 short paragraphs or a short bullet list. No top-level heading.
 
@@ -595,5 +747,6 @@ Format: Markdown, 1-2 short paragraphs or a short bullet list. No top-level head
         # Wrapped at "### {name}" (level 3) -> anything internal nests at >=4.
         body = _safe_generate(ollama_client, model, prompt, context_length, name,
                                min_heading_level=4)
+        body = _strip_leaked_internal_section(body)
         parts.append(f"### {name}\n\n{body}")
     return "\n\n".join(parts)

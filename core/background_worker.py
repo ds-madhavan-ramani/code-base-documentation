@@ -16,6 +16,7 @@ from utils.prompts import (
     DEV_DOCS_TAIL_SECTIONS,
     USER_DOCS_HEAD_SECTIONS,
     USER_DOCS_TAIL_SECTIONS,
+    MAX_FEATURE_CANDIDATE_FILES,
     build_doc_context,
     build_sectioned_doc,
     build_repo_structure_section,
@@ -113,15 +114,26 @@ class BackgroundWorker:
             analysis["system_diagram"] = diagram
 
             repo_url = job.source if job.source_type == "github" else None
-            context = build_doc_context(analysis, repo_url=repo_url)
             significant_files = select_significant_files(
                 code_files, file_structures, key_modules=analysis.get("key_modules")
             )
+            context = build_doc_context(
+                analysis, repo_url=repo_url, file_structures=file_structures, significant_files=significant_files
+            )
 
-            # Step 4: Identify real features once, shared by both documents,
-            # grounded only in the real files/functions above.
+            # Step 4: Identify real features once, shared by both documents.
+            # Uses a larger candidate pool than significant_files (which is
+            # capped for the per-file walkthrough) -- otherwise a real
+            # feature whose file didn't make that small cut gets wrongly
+            # pinned to an unrelated file that did.
+            feature_candidate_files = select_significant_files(
+                code_files, file_structures, key_modules=analysis.get("key_modules"),
+                max_files=MAX_FEATURE_CANDIDATE_FILES,
+            )
             self.job_queue.update_job(job.job_id, progress=30, current_step="Identifying real features...")
-            features = identify_features(self.ollama, self.dev_model, context, significant_files, file_structures)
+            features = identify_features(
+                self.ollama, self.dev_model, context, feature_candidate_files, file_structures
+            )
 
             # Step 5: Generate documentation, section by section, respecting doc_type
             logger.info(f"Generating documentation for {job.job_id}...")
