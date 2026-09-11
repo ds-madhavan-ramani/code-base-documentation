@@ -117,6 +117,18 @@ if uploaded_files:
 
         with st.form("local_upload_form"):
             repo_name = st.text_input("Repository Name", value="my_project")
+            user_context = st.text_area(
+                "Project Overview & Use Case (optional, strongly recommended)",
+                placeholder=(
+                    "What is this tool/project, and what problem does it solve? "
+                    "E.g. \"An internal tool for the legal team to extract and "
+                    "cross-reference clauses across vendor contracts, replacing "
+                    "a manual spreadsheet process.\" Code alone can't explain "
+                    "WHY a project exists — this grounds the generated Big "
+                    "Picture section instead of leaving the model to guess."
+                ),
+                height=100,
+            )
             doc_type_label = st.radio(
                 "Document Type", list(DOC_TYPE_OPTIONS.keys()), horizontal=True
             )
@@ -130,7 +142,8 @@ if uploaded_files:
                 # so depth of analysis and progress reporting are identical
                 # regardless of whether the code came from a zip or a URL.
                 job = job_queue.create_job(
-                    repo_name, "upload", code_files, doc_type=DOC_TYPE_OPTIONS[doc_type_label]
+                    repo_name, "upload", code_files,
+                    doc_type=DOC_TYPE_OPTIONS[doc_type_label], user_context=user_context
                 )
                 st.success(f"✅ Job submitted! ID: `{job.job_id}`")
                 st.info("Analysis running in background. Check 'View Jobs' to monitor progress.")
@@ -149,6 +162,19 @@ elif input_mode == "🐙 GitHub Repository":
         with col2:
             repo_name = st.text_input("Project Name", placeholder="my_project")
 
+        user_context = st.text_area(
+            "Project Overview & Use Case (optional, strongly recommended)",
+            placeholder=(
+                "What is this tool/project, and what problem does it solve? "
+                "E.g. \"An internal tool for the legal team to extract and "
+                "cross-reference clauses across vendor contracts, replacing "
+                "a manual spreadsheet process.\" Code alone can't explain "
+                "WHY a project exists — this grounds the generated Big "
+                "Picture section instead of leaving the model to guess."
+            ),
+            height=100,
+        )
+
         doc_type_label = st.radio(
             "Document Type", list(DOC_TYPE_OPTIONS.keys()), horizontal=True
         )
@@ -166,7 +192,8 @@ elif input_mode == "🐙 GitHub Repository":
         else:
             # Create job
             job = job_queue.create_job(
-                repo_name, "github", repo_url, doc_type=DOC_TYPE_OPTIONS[doc_type_label]
+                repo_name, "github", repo_url,
+                doc_type=DOC_TYPE_OPTIONS[doc_type_label], user_context=user_context
             )
             st.success(f"✅ Job submitted! ID: `{job.job_id}`")
             st.info("Analysis running in background. Check 'View Jobs' to monitor progress.")

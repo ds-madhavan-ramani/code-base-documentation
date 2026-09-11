@@ -80,12 +80,17 @@ DEV_DOCS_TIER1_SECTIONS: List[Dict[str, str]] = [
         "title": "Big Picture",
         "template": """Project: {repo_name}
 
-Big-picture summary from analysis:
+The project's own author describes it as:
+{user_context}
+
+Big-picture summary from code analysis:
 {overview}
 
 Write the opening section of a developer guide, titled "Big Picture". In
 plain, simplified language explain WHAT this codebase does, HOW it works
-at the highest level, and WHY it is built this way. Strip away detail,
+at the highest level, and WHY it is built this way. If the author's own
+description above is given, treat it as authoritative for WHAT/WHY — don't
+contradict it, use the code analysis to fill in HOW. Strip away detail,
 don't list files or functions here.
 
 Format: Markdown, 2-4 short paragraphs. Do not add a heading, one will be added.""",
@@ -168,11 +173,16 @@ list for troubleshooting. Do not add a heading, one will be added.""",
 USER_DOCS_HEAD_SECTIONS: List[Dict[str, str]] = [
     {
         "title": "Big Picture",
-        "template": """Big-picture summary from analysis:
+        "template": """The project's own author describes it as:
+{user_context}
+
+Big-picture summary from code analysis:
 {overview}
 
 Write a short "Big Picture" section for a non-technical user guide: plain
-language, what this does and why someone would use it.
+language, what this does and why someone would use it. If the author's own
+description above is given, ground your answer in it rather than the code
+analysis alone.
 
 Format: Markdown, 2-3 short sentences. Do not add a heading, one will be added.""",
     },
@@ -226,6 +236,7 @@ def build_doc_context(analysis: dict, repo_url: Optional[str] = None) -> dict:
         "key_insights": analysis.get("key_insights", ""),
         "overview": analysis.get("overview", ""),
         "how_it_works": analysis.get("how_it_works", ""),
+        "user_context": analysis.get("user_context") or "(not provided)",
         "modules": ", ".join(analysis.get("key_modules", [])[:5]),
     }
 
@@ -288,6 +299,7 @@ def identify_features(ollama_client, model: str, context: dict,
     )[:4000]
 
     prompt = f"""Project: {context['repo_name']}
+The project's own author describes it as: {context['user_context']}
 Architecture: {context['architecture']}
 How it works: {context['how_it_works']}
 

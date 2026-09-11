@@ -79,13 +79,17 @@ class OdysseusAnalysisAgent:
                 f"Available: {models[:3]}"
             )
 
-    def analyze_deep(self, code_files: Dict[str, str], repo_name: str) -> Dict:
+    def analyze_deep(self, code_files: Dict[str, str], repo_name: str, user_context: str = "") -> Dict:
         """
         Run deep code analysis using Odysseus with Ollama models.
 
         Args:
             code_files: Dict of {filename: content}
             repo_name: Repository name for context
+            user_context: Optional human-written description of the project
+                and the use case it addresses. Code alone can describe HOW
+                something works, never WHY it exists — this grounds the
+                overview instead of leaving the model to guess at intent.
 
         Returns:
             Analysis results with architecture, patterns, dependencies, etc.
@@ -111,22 +115,25 @@ class OdysseusAnalysisAgent:
                 )
 
                 # Run analysis
-                prompt = self._build_analysis_prompt(repo_name, code_files)
+                prompt = self._build_analysis_prompt(repo_name, code_files, user_context)
                 analysis_result = harness.run(prompt)
 
                 # Parse results
                 analysis = self._parse_analysis(
                     analysis_result, code_files, repo_name
                 )
+                analysis["user_context"] = user_context
                 return analysis
 
         except Exception as e:
             logger.error(f"Odysseus analysis failed: {e}")
             logger.info("Using lightweight fallback analysis")
-            return self._lightweight_analysis(code_files, repo_name)
+            analysis = self._lightweight_analysis(code_files, repo_name)
+            analysis["user_context"] = user_context
+            return analysis
 
     def _build_analysis_prompt(
-        self, repo_name: str, code_files: Dict[str, str]
+        self, repo_name: str, code_files: Dict[str, str], user_context: str = ""
     ) -> str:
         """Build analysis prompt optimized for open-source models."""
         file_summary = "\n".join(
@@ -134,11 +141,23 @@ class OdysseusAnalysisAgent:
             for name, content in list(code_files.items())[:40]
         )
 
+        user_context_block = (
+            f"""
+The project's own author describes it like this — treat this as authoritative
+for WHAT the project is and WHY it exists; don't contradict it, use your own
+reading of the code to fill in HOW it's built:
+\"\"\"
+{user_context}
+\"\"\"
+"""
+            if user_context else ""
+        )
+
         return f"""Analyze this codebase and provide structured insights.
 
 REPOSITORY: {repo_name}
 FILES: {len(code_files)} total
-
+{user_context_block}
 Sample files:
 {file_summary}
 
