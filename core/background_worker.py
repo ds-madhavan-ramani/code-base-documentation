@@ -165,7 +165,12 @@ class BackgroundWorker:
 
             def report(label, index, total, title):
                 done["n"] += 1
-                pct = 30 + int(60 * done["n"] / sections_total) if sections_total else 90
+                # Repository Structure's comment batches (build_repo_structure_section's
+                # on_batch) aren't individually counted in sections_total, since the
+                # batch count isn't known until that call runs -- clamp so those extra
+                # calls can't push the running percentage past the 90% ceiling reserved
+                # for "generating" (95%/100% are set separately, after this loop).
+                pct = min(90, 30 + int(60 * done["n"] / sections_total)) if sections_total else 90
                 self.job_queue.update_job(
                     job.job_id, progress=pct,
                     current_step=f"{label} — {index}/{total}: {title}"
@@ -230,11 +235,12 @@ class BackgroundWorker:
         """Developer Docs: high-level flow, then feature->file map, then a
         grounded per-file walkthrough, then setup/troubleshooting."""
         try:
-            if on_step:
-                on_step("Developer docs", 1, 1, "Repository Structure")
             repo_structure = build_repo_structure_section(
                 self.ollama, self.dev_model, context, code_files, file_structures, significant_files,
                 context_length=8192,
+                on_batch=lambda i, t: on_step and on_step(
+                    "Developer docs", i, t, f"Repository Structure — comment batch {i}/{t}"
+                ),
             )
             tier1 = build_sectioned_doc(
                 self.ollama, self.dev_model, DEV_DOCS_TIER1_SECTIONS, context, context_length=8192,
