@@ -268,18 +268,28 @@ def build_sectioned_doc(ollama_client, model: str, sections: List[Dict[str, str]
 def select_significant_files(code_files: Dict[str, str], file_structures: Dict[str, dict],
                               key_modules: Optional[List[str]] = None,
                               max_files: int = MAX_WALKTHROUGH_FILES) -> List[str]:
-    """Rank files by how much real structure they contain (functions +
-    classes found by regex), so per-file walkthrough calls are spent on the
-    files that matter instead of trivial config/test files."""
+    """Rank files by real importance — Aider's repo-map algorithm: PageRank
+    over a "file R calls a symbol defined in file D" graph (see
+    core/repo_map.py) — so per-file walkthrough calls are spent on files
+    other code actually depends on, not just ones with a lot of code on
+    paper. Falls back to a functions+classes count as a tie-breaker and
+    for languages/files with no graph signal."""
+    from core.repo_map import rank_files_by_importance
+
+    ranks = rank_files_by_importance(code_files, file_structures)
+
     def richness(filename: str) -> int:
         structure = file_structures.get(filename, {})
         return len(structure.get("functions", [])) + len(structure.get("classes", []))
 
-    ranked = sorted(code_files.keys(), key=richness, reverse=True)
-    significant = [f for f in ranked if richness(f) > 0][:max_files]
+    def score(filename: str):
+        return (ranks.get(filename, 0.0), richness(filename))
+
+    ranked = sorted(code_files.keys(), key=score, reverse=True)
+    significant = [f for f in ranked if score(f) > (0.0, 0)][:max_files]
 
     # Always include Odysseus's own key modules, even a thin entrypoint/config
-    # file the regex extractor found no functions/classes in.
+    # file with no detected functions/classes/calls of its own.
     for module in (key_modules or []):
         if module in code_files and module not in significant and len(significant) < max_files:
             significant.append(module)

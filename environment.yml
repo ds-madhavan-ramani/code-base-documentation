@@ -16,4 +16,7 @@ dependencies:
     - python-dotenv==1.0.0
     - tree-sitter==0.21.0
     - tree_sitter_languages==1.10.2
+    - networkx==3.3
+    - numpy==1.26.4
+    - scipy==1.13.1
     - odysseus-harness @ git+https://github.com/ds-madhavan-ramani/odysseus.git@main#egg=odysseus-harness&subdirectory=odysseus
