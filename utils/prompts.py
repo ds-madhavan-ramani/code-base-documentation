@@ -25,6 +25,7 @@ import logging
 import os
 import re
 from collections import defaultdict
+from pathlib import Path
 from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -270,12 +271,20 @@ def _infer_module_path(filename: str) -> Optional[str]:
 
 
 def _real_code_touchpoints(file_structures: Dict[str, dict], significant_files: List[str],
-                            max_files: int = 4, max_names_per_file: int = 6) -> str:
+                            max_files: int = 10, max_names_per_file: int = 6) -> str:
     """A short, real grounding block: exact file path, real import/module
     path (only when derivable, see _infer_module_path), and real
     function/class names — so a Common Tasks code example either uses
     something real or the prompt can tell it to describe the task in
-    prose instead of inventing a parallel fictional API."""
+    prose instead of inventing a parallel fictional API.
+
+    max_files defaults higher than a typical "top few files" cutoff
+    because select_significant_files() now puts Odysseus's own
+    key_modules first (see _matches_key_module) — a repo with 5-7 key
+    modules would otherwise have the ones listed last (often exactly the
+    external-integration files, like an email or payment service, that
+    a code example is most tempted to fabricate a fictional class for)
+    cut off by a narrower slice."""
     lines = []
     for filename in significant_files[:max_files]:
         structure = file_structures.get(filename, {})
@@ -530,6 +539,20 @@ def build_sectioned_doc(ollama_client, model: str, sections: List[Dict[str, str]
 # the fix for hallucinated function names and feature descriptions.
 # --------------------------------------------------------------------------
 
+def _matches_key_module(filename: str, key_module: str) -> bool:
+    """Odysseus's key_modules entries are descriptive strings written by
+    the analysis model, not exact file paths — e.g. "common/email/
+    IndiaEmailService (notification system)" for the real file
+    "common/src/main/java/.../email/IndiaEmailService.java". An exact
+    equality check against code_files therefore never matches real
+    output. A file's basename (its class/module name, which Odysseus
+    reliably keeps even when it abbreviates or drops the directory
+    prefix) appearing in the key_module string is a reliable, real signal
+    without needing per-language path parsing."""
+    stem = Path(filename).stem
+    return bool(stem) and len(stem) > 2 and stem in key_module
+
+
 def select_significant_files(code_files: Dict[str, str], file_structures: Dict[str, dict],
                               key_modules: Optional[List[str]] = None,
                               max_files: int = MAX_WALKTHROUGH_FILES) -> List[str]:
@@ -538,7 +561,15 @@ def select_significant_files(code_files: Dict[str, str], file_structures: Dict[s
     core/repo_map.py) — so per-file walkthrough calls are spent on files
     other code actually depends on, not just ones with a lot of code on
     paper. Falls back to a functions+classes count as a tie-breaker and
-    for languages/files with no graph signal."""
+    for languages/files with no graph signal.
+
+    Odysseus's own key_modules are reserved a slot FIRST (matched fuzzily
+    — see _matches_key_module), before the ranking fill runs. A file
+    Odysseus's deep analysis explicitly flagged as central — e.g. an
+    email or payment integration with few incoming calls, so a low
+    PageRank score — would otherwise never make the cut on a large repo,
+    where the ranked list alone already fills every slot before a
+    "leftover room" check for key_modules is ever true."""
     from core.repo_map import rank_files_by_importance
 
     ranks = rank_files_by_importance(code_files, file_structures)
@@ -550,14 +581,22 @@ def select_significant_files(code_files: Dict[str, str], file_structures: Dict[s
     def score(filename: str):
         return (ranks.get(filename, 0.0), richness(filename))
 
-    ranked = sorted(code_files.keys(), key=score, reverse=True)
-    significant = [f for f in ranked if score(f) > (0.0, 0)][:max_files]
-
-    # Always include Odysseus's own key modules, even a thin entrypoint/config
-    # file with no detected functions/classes/calls of its own.
+    significant: List[str] = []
     for module in (key_modules or []):
-        if module in code_files and module not in significant and len(significant) < max_files:
-            significant.append(module)
+        if len(significant) >= max_files:
+            break
+        match = next(
+            (f for f in code_files if f not in significant and _matches_key_module(f, module)), None
+        )
+        if match:
+            significant.append(match)
+
+    ranked = sorted(code_files.keys(), key=score, reverse=True)
+    for filename in ranked:
+        if len(significant) >= max_files:
+            break
+        if filename not in significant and score(filename) > (0.0, 0):
+            significant.append(filename)
 
     return significant
 

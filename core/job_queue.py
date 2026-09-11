@@ -17,13 +17,19 @@ class JobStatus(str, Enum):
 
 class Job:
     def __init__(self, job_id: str, repo_name: str, source_type: str, source: str,
-                 doc_type: str = "both", user_context: str = ""):
+                 doc_type: str = "both", user_context: str = "", use_cached_analysis: bool = False):
         self.job_id = job_id
         self.repo_name = repo_name
         self.source_type = source_type  # "upload", "github"
         self.source = source
         self.doc_type = doc_type  # "both", "dev", or "user"
         self.user_context = user_context  # user-supplied overview/use-case, grounds the Big Picture section
+        # If true, and a metadata.json from a previous run of this project
+        # exists, skip the slow Odysseus deep-analysis pass and reuse its
+        # saved conclusions -- for regenerating docs after a template/prompt
+        # change, not a code change. Falls back to a full analysis if no
+        # cached metadata is found (see BackgroundWorker._process_job).
+        self.use_cached_analysis = use_cached_analysis
         self.status = JobStatus.PENDING
         self.created_at = datetime.now().isoformat()
         self.started_at = None
@@ -42,6 +48,7 @@ class Job:
             "source": self.source,
             "doc_type": self.doc_type,
             "user_context": self.user_context,
+            "use_cached_analysis": self.use_cached_analysis,
             "status": self.status.value,
             "created_at": self.created_at,
             "started_at": self.started_at,
@@ -70,7 +77,8 @@ class JobQueue:
         self._load_jobs()
 
     def create_job(self, repo_name: str, source_type: str, source,
-                   doc_type: str = "both", user_context: str = "") -> Job:
+                   doc_type: str = "both", user_context: str = "",
+                   use_cached_analysis: bool = False) -> Job:
         """Create a new analysis job.
 
         `source` is a GitHub URL string for source_type="github", or the
@@ -85,6 +93,10 @@ class JobQueue:
         project and the use case it addresses — code alone can't explain
         *why* a project exists, so this grounds the Big Picture section
         instead of leaving the model to guess at intent.
+
+        `use_cached_analysis` skips the slow Odysseus deep-analysis pass
+        by reusing a previous run's saved metadata.json for this project
+        — see Job.use_cached_analysis.
         """
         job_id = str(uuid.uuid4())[:8]
         if source_type == "upload":
@@ -93,7 +105,8 @@ class JobQueue:
             source_ref = str(sidecar_path)
         else:
             source_ref = source
-        job = Job(job_id, repo_name, source_type, source_ref, doc_type=doc_type, user_context=user_context)
+        job = Job(job_id, repo_name, source_type, source_ref, doc_type=doc_type, user_context=user_context,
+                  use_cached_analysis=use_cached_analysis)
         with self._lock:
             self.jobs[job_id] = job
         self._save_job(job)
@@ -173,7 +186,8 @@ class JobQueue:
                 job = Job(data["job_id"], data["repo_name"],
                          data["source_type"], data["source"],
                          doc_type=data.get("doc_type", "both"),
-                         user_context=data.get("user_context", ""))
+                         user_context=data.get("user_context", ""),
+                         use_cached_analysis=data.get("use_cached_analysis", False))
                 job.status = JobStatus(data["status"])
                 job.created_at = data["created_at"]
                 job.started_at = data.get("started_at")

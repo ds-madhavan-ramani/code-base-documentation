@@ -212,6 +212,23 @@ get wrongly pinned to an unrelated file that did make the cut, since that
 was the only file the model had to choose from. This was a real, observed
 failure mode, not a theoretical one.
 
+That widened pool turned out not to be the whole story. `select_significant_files()`
+was already meant to always reserve a slot for Odysseus's own `key_modules`
+— the files its deep-analysis pass explicitly flags as central, even ones
+with too few incoming calls to rank highly on PageRank alone (an email or
+payment integration, say). But on real output this safety net never
+actually fired, for two compounding reasons: (1) `key_modules` entries are
+descriptive strings Odysseus writes itself, like `"common/email/
+IndiaEmailService (notification system)"` — not the real file path
+`common/src/main/java/.../email/IndiaEmailService.java` — so an exact
+`module in code_files` equality check never matched; and (2) even a
+matching module was only appended "if there's room left" after the ranked
+list already filled every slot, which is never true once a repo has more
+than `max_files` scored files. `_matches_key_module()` now matches on the
+file's real basename appearing in the key_module string (a reliable
+signal regardless of how much of the path Odysseus abbreviates), and
+key_modules are reserved slots *before* the ranking fill runs, not after.
+
 Two more grounding fixes worth calling out, both found by reviewing real
 output against an actual 194-file Java/Spring codebase:
 - **Common Tasks, Examples & Troubleshooting** now gets a real per-file
@@ -220,9 +237,10 @@ output against an actual 194-file Java/Spring codebase:
   file's actual path (Java/Kotlin's Maven layout, Python's dotted module
   convention). Previously this section only saw a dependency-name list and
   invented a plausible-looking but fictional API to write examples against
-  — e.g. a fabricated `com.example.common.utils.Normalise.stripAndLowercase()`
-  call that contradicted the real, correctly-grounded `Normalise.java`
-  walkthrough two sections earlier in the same document.
+  — e.g. fabricated `EmailService`/`PaymentService` classes with generic
+  Spring boilerplate, instead of citing the project's real
+  `IndiaEmailService`/`StripeCheckoutData` classes (the two files the
+  key_modules fix above was written to surface).
 - Both documents now catch a model restating its own section title as a
   **bold paragraph** (e.g. a "**How It's Put Together**" line directly
   under the real heading) — the existing dedup only caught a restated
@@ -779,7 +797,30 @@ Each project generates:
   into a ~60-entry sidebar of mostly-identical labels.
 - `USER_GUIDE.md` - User-friendly guide
 - `USER_GUIDE.html` - Navigable HTML version, same layout as above
-- `metadata.json` - Analysis metadata
+- `metadata.json` - The saved Odysseus analysis for the project (architecture,
+  dependencies, patterns, `key_modules`, `user_context`, ...), plus two
+  fields recorded at doc-generation time:
+  - `coverage` — `total_files`, `files_fully_documented`, and
+    `coverage_pct`. `select_significant_files()` walks through only a
+    capped subset of files (`DEV_DOCS_MAX_FILES`, default 12) on a large
+    repo, so most files appear only as a line in the Repository Structure
+    tree, not a full walkthrough — this makes that ratio visible instead
+    of implicit (shown in the View Jobs page too).
+  - `documented_files` / `identified_features` — exactly which files got a
+    full walkthrough and which features were identified, so it's possible
+    to tell precisely what the generated docs did and didn't cover.
+
+  This file also enables **doc-only regeneration**: the "🔄 Regenerate
+  Docs (skip re-analysis)" button in View Jobs creates a new job with
+  `use_cached_analysis=True`, which makes `BackgroundWorker._process_job`
+  load this file (`DocumentationGenerator.load_metadata()`) instead of
+  re-running Odysseus's deep-analysis pass — by far the slowest step
+  (multi-turn Harness call, `ODYSSEUS_MAX_TURNS`/`ODYSSEUS_BUDGET_TOKENS`
+  turns/tokens). Useful for iterating on doc templates/prompts without
+  paying that cost again; it does NOT re-inspect the source, so a real
+  code change needs an ordinary (non-cached) run to be reflected. Falls
+  back to a full analysis automatically if no `metadata.json` exists yet
+  for that project name.
 
 ---
 

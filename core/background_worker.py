@@ -102,16 +102,32 @@ class BackgroundWorker:
             # the doc-writing model can cite instead of guessing).
             file_structures = CodeParser(".").build_file_structures(code_files)
 
-            # Step 3: Deep analysis with Odysseus Harness
-            self.job_queue.update_job(job.job_id, progress=10,
-                                       current_step="Running deep analysis with Odysseus...")
-            logger.info(f"Running deep analysis for {job.job_id}...")
-            analysis = self.odysseus.analyze_deep(code_files, job.repo_name, user_context=job.user_context)
-            self.job_queue.update_job(job.job_id, analysis=analysis, progress=25,
-                                       current_step="Generating system diagram...")
-
-            diagram = self.odysseus.generate_system_diagram(analysis)
-            analysis["system_diagram"] = diagram
+            # Step 3: Deep analysis with Odysseus Harness -- or, if the job
+            # asked for it and a previous run's metadata.json exists, reuse
+            # those saved conclusions instead. Skips the slow multi-turn
+            # Harness pass entirely; meant for regenerating docs after a
+            # template/prompt change, not a code change (it does NOT
+            # re-inspect code_files, so a real code change needs a fresh,
+            # non-cached run to be reflected).
+            cached_analysis = self.doc_gen.load_metadata(job.repo_name) if job.use_cached_analysis else None
+            if cached_analysis:
+                logger.info(f"Reusing cached analysis for {job.job_id} ({job.repo_name}) — skipping Odysseus")
+                self.job_queue.update_job(job.job_id, progress=25,
+                                           current_step="Reusing cached analysis from a previous run...")
+                analysis = cached_analysis
+                # A regeneration may supply a different/updated user_context
+                # than the run that produced the cached analysis.
+                if job.user_context:
+                    analysis["user_context"] = job.user_context
+            else:
+                self.job_queue.update_job(job.job_id, progress=10,
+                                           current_step="Running deep analysis with Odysseus...")
+                logger.info(f"Running deep analysis for {job.job_id}...")
+                analysis = self.odysseus.analyze_deep(code_files, job.repo_name, user_context=job.user_context)
+                self.job_queue.update_job(job.job_id, analysis=analysis, progress=25,
+                                           current_step="Generating system diagram...")
+                diagram = self.odysseus.generate_system_diagram(analysis)
+                analysis["system_diagram"] = diagram
 
             repo_url = job.source if job.source_type == "github" else None
             significant_files = select_significant_files(
@@ -164,7 +180,19 @@ class BackgroundWorker:
                 lambda label, i, t, title: report(label, i, t, title)
             ) if want_user else None
 
-            # Step 6: Save results
+            # Step 6: Record coverage transparency, then save results.
+            # significant_files is only ~5-10% of a large repo (12 of 194
+            # files, in one real run) -- without recording this, a reader
+            # of metadata.json has no way to tell how much of the codebase
+            # the walkthrough actually covered versus skipped.
+            analysis["documented_files"] = significant_files
+            analysis["identified_features"] = [f.get("name") for f in features if isinstance(f, dict) and f.get("name")]
+            analysis["coverage"] = {
+                "total_files": len(code_files),
+                "files_fully_documented": len(significant_files),
+                "coverage_pct": round(100 * len(significant_files) / len(code_files), 1) if code_files else 0.0,
+            }
+
             self.job_queue.update_job(job.job_id, progress=95, current_step="Saving documentation...")
             self.doc_gen.save_documentation(job.repo_name, dev_docs, user_docs, analysis)
 
