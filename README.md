@@ -733,9 +733,13 @@ GIT_TRACE=1 streamlit run app/main.py
 
 Each project generates:
 - `DEVELOPER_DOCS.md` - Technical documentation
-- `DEVELOPER_DOCS.html` - Styled HTML version
+- `DEVELOPER_DOCS.html` - Navigable HTML version: a full-width layout with
+  a sticky sidebar table of contents (built from the document's own real
+  heading structure, so it can't drift out of sync) next to the content —
+  not a narrow single-column page — with a "back to top" link and a
+  collapsible drawer nav on mobile widths.
 - `USER_GUIDE.md` - User-friendly guide
-- `USER_GUIDE.html` - Styled HTML version
+- `USER_GUIDE.html` - Navigable HTML version, same layout as above
 - `metadata.json` - Analysis metadata
 
 ---
