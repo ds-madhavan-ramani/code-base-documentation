@@ -23,7 +23,7 @@ class DocumentationGenerator:
         """
         md = Markdown(
             extensions=['fenced_code', 'tables', 'toc'],
-            extension_configs={'toc': {'toc_depth': '2-4', 'permalink': False}},
+            extension_configs={'toc': {'toc_depth': '2-3', 'permalink': False}},
         )
         try:
             html_body = md.convert(markdown_content)

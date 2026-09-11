@@ -156,9 +156,10 @@ old count-based heuristic got exactly that case backwards.
 flowchart TD
     CF["code_files<br/>(real file content)"] --> FS["build_file_structures()<br/>tree-sitter: real functions/classes/calls per file"]
     A["Odysseus analysis<br/>architecture, overview, how_it_works, ..."] --> CTX["build_doc_context()<br/>+ real repo_url"]
-    FS --> SIG["select_significant_files()<br/>PageRank over the real call graph (core/repo_map.py)"]
-    CTX --> SIG
-    SIG --> FEAT["identify_features()<br/>ONE call — features named only from real files/functions given"]
+    FS --> SIG["select_significant_files()<br/>PageRank over the real call graph (core/repo_map.py)<br/>capped at DEV_DOCS_MAX_FILES for the walkthrough"]
+    FS --> SIGFEAT["select_significant_files() again, capped at<br/>DEV_DOCS_MAX_FEATURE_FILES (larger pool)"]
+    CTX --> SIGFEAT
+    SIGFEAT --> FEAT["identify_features()<br/>ONE call — features named only from real files/functions given"]
 
     CF --> TREE["build_repo_tree()<br/>deterministic directory tree — no LLM, can't drop/misplace a file"]
     SIG --> RSTRUCT["Repository Structure: real tree<br/>+ ONE call for one-line purpose comments,<br/>JSON-mapped by exact file path"]
@@ -200,6 +201,40 @@ function name.
 so both documents describe a consistent set of real capabilities — and
 turns each into a usage-level "how to use this feature" section instead of
 one generic "Features & Common Workflows" paragraph.
+
+`identify_features()` is deliberately given a **larger** candidate file
+pool (`DEV_DOCS_MAX_FEATURE_FILES`, default 40) than the per-file
+walkthrough's `DEV_DOCS_MAX_FILES` (default 12) — it's one shared JSON
+call, not one call per file, so it's cheap to widen. Without this, a real
+feature whose implementing file ranked just outside the small walkthrough
+cut (e.g. an email or payment service file with few incoming calls) would
+get wrongly pinned to an unrelated file that did make the cut, since that
+was the only file the model had to choose from. This was a real, observed
+failure mode, not a theoretical one.
+
+Two more grounding fixes worth calling out, both found by reviewing real
+output against an actual 194-file Java/Spring codebase:
+- **Common Tasks, Examples & Troubleshooting** now gets a real per-file
+  signature block (`_real_code_touchpoints()`), including a real
+  import/package path when one can be deterministically derived from the
+  file's actual path (Java/Kotlin's Maven layout, Python's dotted module
+  convention). Previously this section only saw a dependency-name list and
+  invented a plausible-looking but fictional API to write examples against
+  — e.g. a fabricated `com.example.common.utils.Normalise.stripAndLowercase()`
+  call that contradicted the real, correctly-grounded `Normalise.java`
+  walkthrough two sections earlier in the same document.
+- Both documents now catch a model restating its own section title as a
+  **bold paragraph** (e.g. a "**How It's Put Together**" line directly
+  under the real heading) — the existing dedup only caught a restated
+  literal `#` heading, not this form (`_strip_restated_bold_title`).
+- The User Guide's per-feature prompt gives real function/class names as
+  background grounding only, but a model would sometimes echo that
+  grounding back verbatim as its own "Real Capability Signals" heading
+  followed by a raw getter/setter dump — visible internals in a document
+  meant for non-technical readers. Fixed at both the prompt (reworded to
+  discourage it) and output level (`_strip_leaked_internal_section()`
+  strips any such heading and the list under it, as a second line of
+  defense regardless of prompt wording).
 
 This is a deterministic Python-level orchestrator (a plain loop assigning
 one Ollama call per file/feature), not an LLM deciding on its own how to
@@ -737,7 +772,11 @@ Each project generates:
   a sticky sidebar table of contents (built from the document's own real
   heading structure, so it can't drift out of sync) next to the content —
   not a narrow single-column page — with a "back to top" link and a
-  collapsible drawer nav on mobile widths.
+  collapsible drawer nav on mobile widths. The sidebar TOC is capped at
+  heading depth 2-3 (sections and per-file/per-feature entries), leaving
+  out the internal depth-4 sub-headings inside a file walkthrough (Key
+  Functions, Imports, ...) that would otherwise turn a 12-file walkthrough
+  into a ~60-entry sidebar of mostly-identical labels.
 - `USER_GUIDE.md` - User-friendly guide
 - `USER_GUIDE.html` - Navigable HTML version, same layout as above
 - `metadata.json` - Analysis metadata
