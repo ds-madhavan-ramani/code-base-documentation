@@ -21,6 +21,7 @@ from utils.prompts import (
     build_sectioned_doc,
     build_repo_structure_section,
     select_significant_files,
+    is_low_value_for_deep_documentation,
     identify_features,
     build_feature_map_section,
     build_file_walkthrough_sections,
@@ -190,12 +191,25 @@ class BackgroundWorker:
             # files, in one real run) -- without recording this, a reader
             # of metadata.json has no way to tell how much of the codebase
             # the walkthrough actually covered versus skipped.
+            #
+            # Test files, doc-tooling files, and __init__.py markers are
+            # deliberately excluded from significant_files (see
+            # is_low_value_for_deep_documentation) -- coverage_pct is
+            # reported against eligible_files (everything else) rather
+            # than total_files, so it reads as "how much of the real
+            # application code is covered" instead of being permanently
+            # capped well under 100% by files never meant to get a
+            # walkthrough in the first place.
+            eligible_files = [f for f in code_files if not is_low_value_for_deep_documentation(f)]
             analysis["documented_files"] = significant_files
             analysis["identified_features"] = [f.get("name") for f in features if isinstance(f, dict) and f.get("name")]
             analysis["coverage"] = {
                 "total_files": len(code_files),
+                "eligible_files": len(eligible_files),
                 "files_fully_documented": len(significant_files),
-                "coverage_pct": round(100 * len(significant_files) / len(code_files), 1) if code_files else 0.0,
+                "coverage_pct": (
+                    round(100 * len(significant_files) / len(eligible_files), 1) if eligible_files else 0.0
+                ),
             }
 
             self.job_queue.update_job(job.job_id, progress=95, current_step="Saving documentation...")

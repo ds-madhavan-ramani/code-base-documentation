@@ -836,12 +836,26 @@ Each project generates:
 - `metadata.json` - The saved Odysseus analysis for the project (architecture,
   dependencies, patterns, `key_modules`, `user_context`, ...), plus two
   fields recorded at doc-generation time:
-  - `coverage` — `total_files`, `files_fully_documented`, and
-    `coverage_pct`. `select_significant_files()` walks through only a
+  - `coverage` — `total_files`, `eligible_files`, `files_fully_documented`,
+    and `coverage_pct`. `select_significant_files()` walks through only a
     capped subset of files (`DEV_DOCS_MAX_FILES`, default 12) on a large
     repo, so most files appear only as a line in the Repository Structure
     tree, not a full walkthrough — this makes that ratio visible instead
-    of implicit (shown in the View Jobs page too).
+    of implicit (shown in the View Jobs page too). `coverage_pct` is
+    computed against `eligible_files`, not `total_files` — test files,
+    doc-tooling files, and bare `__init__.py` package markers are
+    excluded from the walkthrough entirely
+    (`is_low_value_for_deep_documentation()`), so they'd otherwise put a
+    hard ceiling on the percentage well under 100% for reasons unrelated
+    to real documentation coverage. This isn't just cosmetic: a test
+    file's raw function count (dozens of `test_*` functions) was letting
+    it outrank a genuinely important but less-called production file on
+    the richness tie-breaker, spending walkthrough budget on tests
+    instead of application code. Excluded from: the walkthrough, feature
+    identification, and Common Tasks grounding. NOT excluded from: the
+    Repository Structure tree/comments, which still cover every real
+    file, tests included — that tier is cheap and purely informative
+    rather than a deep dive.
   - `documented_files` / `identified_features` — exactly which files got a
     full walkthrough and which features were identified, so it's possible
     to tell precisely what the generated docs did and didn't cover.
