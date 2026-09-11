@@ -40,7 +40,7 @@ ANTI_HALLUCINATION_NOTE = (
 
 # How many source files get their own dedicated walkthrough call in the
 # Developer Docs. Override via env var for very large or very small repos.
-MAX_WALKTHROUGH_FILES = int(os.environ.get("DEV_DOCS_MAX_FILES", "12"))
+MAX_WALKTHROUGH_FILES = 425 #int(os.environ.get("DEV_DOCS_MAX_FILES", "12"))
 MAX_CHARS_PER_WALKTHROUGH_FILE = 6000
 
 # identify_features() only needs a short JSON call, not one call per file
@@ -60,7 +60,7 @@ MAX_FEATURE_CANDIDATE_FILES = int(os.environ.get("DEV_DOCS_MAX_FEATURE_FILES", "
 # MAX_CHARS_PER_BATCHED_FILE is deliberately smaller than
 # MAX_CHARS_PER_WALKTHROUGH_FILE since several files now share one
 # context window instead of having it to themselves.
-WALKTHROUGH_BATCH_SIZE = int(os.environ.get("DEV_DOCS_WALKTHROUGH_BATCH_SIZE", "1"))
+WALKTHROUGH_BATCH_SIZE = 5  # int(os.environ.get("DEV_DOCS_WALKTHROUGH_BATCH_SIZE", "1"))
 MAX_CHARS_PER_BATCHED_FILE = int(os.environ.get("DEV_DOCS_MAX_CHARS_PER_BATCHED_FILE", "2500"))
 
 # How many files share one Repository Structure comment call. Unlike the
