@@ -43,6 +43,7 @@ MAX_WALKTHROUGH_FILES = int(os.environ.get("DEV_DOCS_MAX_FILES", "12"))
 MAX_CHARS_PER_WALKTHROUGH_FILE = 6000
 
 _LEADING_HEADING_RE = re.compile(r"^#{1,6}[ \t].*\n+", re.MULTILINE)
+_HEADING_LINE_RE = re.compile(r"^(#{1,6})([ \t].*)$", re.MULTILINE)
 
 
 def _strip_leading_heading(text: str) -> str:
@@ -58,14 +59,38 @@ def _strip_leading_heading(text: str) -> str:
     return stripped
 
 
-def _safe_generate(ollama_client, model: str, prompt: str, context_length: int, label: str) -> str:
+def _normalize_headings(text: str, min_level: int = 3) -> str:
+    """Strips a restated leading title (see _strip_leading_heading), then
+    clamps any OTHER heading the model added mid-body to at least
+    min_level. Models routinely give internal sub-structure like "Key
+    Functions" a heading level with no regard for what it's nested under
+    (e.g. "## Key Functions" inside a file walkthrough already wrapped in
+    "### filename"), so a sub-section visually outranks its own parent.
+    Clamping (not stripping) preserves the sub-structure, just nests it
+    correctly."""
+    text = _strip_leading_heading(text)
+
+    def clamp(match: "re.Match") -> str:
+        hashes, rest = match.group(1), match.group(2)
+        if len(hashes) < min_level:
+            hashes = "#" * min_level
+        return hashes + rest
+
+    return _HEADING_LINE_RE.sub(clamp, text)
+
+
+def _safe_generate(ollama_client, model: str, prompt: str, context_length: int, label: str,
+                    min_heading_level: int = 3) -> str:
     """Every model call in this module goes through here so that one failed
     call (timeout, Ollama restart, OOM) produces a visible placeholder for
     just that section/file/feature instead of an uncaught exception that
-    discards every section already generated in the same document."""
+    discards every section already generated in the same document. Also
+    normalizes any heading the model wrote to nest under min_heading_level
+    (see _normalize_headings) — the model doesn't know how deep its output
+    will be wrapped, so it can't be trusted to pick a compatible level."""
     try:
         text = ollama_client.generate(model, prompt, context_length=context_length).strip()
-        return _strip_leading_heading(text)
+        return _normalize_headings(text, min_heading_level)
     except Exception as e:
         logger.error(f"Generation failed for {label}: {e}")
         return f"_(Generation failed for this section — {e})_"
@@ -146,26 +171,42 @@ Repository: {repo_url}
 
 Dependencies: {dependencies}
 
-Write a "Configuration, Setup & Development Workflow" section: how to clone
-this exact repository, install these exact dependencies, configure the
-project, and the typical development loop (run/test/iterate).
+Write a "Configuration, Setup & Development Workflow" section: how to get
+and install this project, install these exact dependencies, configure it,
+and the typical development loop (run/test/iterate).
 
-Format: Markdown, a numbered setup list using the real repository URL
-above (never invent a different one) plus a short workflow paragraph.
+If Repository above is a real URL, use it for a "git clone <that exact
+URL>" step — never invent a different URL. If Repository above says this
+was analyzed from a local upload (no hosted URL), do NOT invent a git
+clone URL or placeholder repository link of any kind — instead say the
+project files should be obtained from wherever this upload/archive came
+from, and start the steps from "extract/obtain the project files" rather
+than "clone".
+
+Format: Markdown, a numbered setup list plus a short workflow paragraph.
 Do not add a heading, one will be added.""",
     },
     {
         "title": "Common Tasks, Examples & Troubleshooting",
         "template": """Project: {repo_name}
 
+Architecture: {architecture}
+Dependencies actually used by this project: {dependencies}
+
 Key insights from analysis:
 {key_insights}
 
 Write a "Common Tasks, Examples & Troubleshooting" section: 2-3 realistic
 usage examples for this codebase, and likely troubleshooting scenarios
-given the insights above.
+given the insights above. Code examples MUST be written in the same
+language and use the same libraries/frameworks as the dependencies listed
+above — do not default to Python (or any other language) unless that's
+actually what this project uses.
 
-Format: Markdown, with code-style examples where sensible and a short FAQ
+Format: Markdown. Put each code example in its own fenced code block as
+its own paragraph — never nested inside a numbered or bulleted list item,
+since that breaks rendering. Introduce each example with a bold title
+line, then the fenced block below it on its own. Follow with a short FAQ
 list for troubleshooting. Do not add a heading, one will be added.""",
     },
 ]
@@ -194,8 +235,13 @@ Repository: {repo_url}
 Dependencies: {dependencies}
 
 Write a "Quick Start & Installation" section for a non-technical audience:
-install steps (3 steps max) using the real repository URL above (never
-invent a different one), and how to get it running the first time.
+install steps (3 steps max) and how to get it running the first time.
+
+If Repository above is a real URL, use it for the download/clone step —
+never invent a different URL. If Repository above says this was analyzed
+from a local upload (no hosted URL), don't invent a URL or repository
+link of any kind — just say to get the project files from wherever this
+upload/archive came from, and start from there.
 
 Format: Markdown, numbered steps, simple language. Do not add a heading, one will be added.""",
     },
@@ -255,7 +301,9 @@ def build_sectioned_doc(ollama_client, model: str, sections: List[Dict[str, str]
         if on_section:
             on_section(index, total, section["title"])
         prompt = section["template"].format_map(safe_context) + f"\n\n{ANTI_HALLUCINATION_NOTE}"
-        body = _safe_generate(ollama_client, model, prompt, context_length, section["title"])
+        # Wrapped at "## title" (level 2) -> anything the model adds nests at >=3.
+        body = _safe_generate(ollama_client, model, prompt, context_length, section["title"],
+                               min_heading_level=3)
         parts.append(f"## {section['title']}\n\n{body}")
     return "\n\n".join(parts)
 
@@ -364,7 +412,10 @@ Format: Markdown, one subheading per feature. Do not add a top-level
 heading, one will be added.
 
 {ANTI_HALLUCINATION_NOTE}"""
-    return _safe_generate(ollama_client, model, prompt, context_length, "Feature -> File Map")
+    # Wrapped externally as "## Feature -> File Map" (level 2); its own
+    # "one subheading per feature" should nest at >=3.
+    return _safe_generate(ollama_client, model, prompt, context_length, "Feature -> File Map",
+                           min_heading_level=3)
 
 
 def build_file_walkthrough_sections(ollama_client, model: str, code_files: Dict[str, str],
@@ -402,7 +453,10 @@ code above — do not invent ones that aren't in it.
 Format: Markdown, no top-level heading (one will be added).
 
 {ANTI_HALLUCINATION_NOTE}"""
-        body = _safe_generate(ollama_client, model, prompt, context_length, filename)
+        # Wrapped at "### `filename`" (level 3) -> internal sub-structure
+        # (Key Functions, Imports, ...) should nest at >=4.
+        body = _safe_generate(ollama_client, model, prompt, context_length, filename,
+                               min_heading_level=4)
         parts.append(f"### `{filename}`\n\n{body}")
     return "\n\n".join(parts)
 
@@ -434,6 +488,8 @@ workflow conceptually rather than inventing precise syntax.
 Format: Markdown, 1-2 short paragraphs or a short bullet list. No top-level heading.
 
 {ANTI_HALLUCINATION_NOTE}"""
-        body = _safe_generate(ollama_client, model, prompt, context_length, name)
+        # Wrapped at "### {name}" (level 3) -> anything internal nests at >=4.
+        body = _safe_generate(ollama_client, model, prompt, context_length, name,
+                               min_heading_level=4)
         parts.append(f"### {name}\n\n{body}")
     return "\n\n".join(parts)
