@@ -715,7 +715,24 @@ def identify_features(ollama_client, model: str, context: dict,
                        significant_files: List[str], file_structures: Dict[str, dict],
                        context_length: int = 8192) -> List[Dict]:
     """One grounded call: name the real features this codebase implements,
-    each backed by real files/functions actually given to the model."""
+    each backed by real files/functions actually given to the model.
+
+    significant_files (ranked by real importance) inevitably includes
+    files that are architecturally central but not a "feature" in any
+    user sense — a logging setup, a generic collections helper, an
+    internal object-proxy utility, an exception-class hierarchy. Left
+    unguarded, the model will still name one of these as a "feature" (it
+    IS a real, important file) and then, when asked later to explain that
+    "feature" to a non-technical reader with nothing genuine to describe,
+    invents a plausible-sounding but false capability for it (observed:
+    celery/local.py — an internal lazy-object-proxy utility — described
+    as "run tasks locally without a broker", which isn't what it does).
+    The instruction below asks the model to use its own judgment about
+    each file's real functions/classes rather than a hardcoded
+    name/path blacklist, since "is this user-facing" depends on what a
+    file actually does, not what it's called — a blacklist like
+    "utils.py" would be wrong for a project where that file happens to
+    hold real business logic."""
     file_summary = "\n".join(
         f"- {f}: functions={file_structures.get(f, {}).get('functions', [])}, "
         f"classes={file_structures.get(f, {}).get('classes', [])}"
@@ -730,9 +747,22 @@ How it works: {context['how_it_works']}
 Real files and the real functions/classes found in them:
 {file_summary}
 
-Identify the distinct user-facing features or capabilities this codebase
-implements, using ONLY the files and functions/classes listed above — do
-not invent files or functions that are not in this list.
+Identify the distinct END-USER-FACING features or capabilities this
+codebase implements — things a user of this software would recognize as
+"a thing I can do with it" (e.g. "submit an application form", "schedule
+a recurring task", "process a payment"), using ONLY the files and
+functions/classes listed above — do not invent files or functions that
+are not in this list.
+
+Do NOT list internal infrastructure, plumbing, or developer-only
+utilities as a "feature", even if their file appears above — for example:
+generic logging setup, low-level object/proxy helpers, generic
+data-structure utilities (dicts/collections), an exception-class
+hierarchy used for internal error handling, or dependency-injection/
+registry plumbing. It is completely fine, and expected, for some files
+listed above to correspond to NO feature at all — only include a file if
+its real functions/classes represent a genuine capability, not just
+because it's on the list.
 
 Respond with JSON only, no markdown fence:
 {{"features": [{{"name": "short feature name", "files": ["exact filenames from the list above"], "key_functions": ["exact function/class names from the list above"]}}]}}
