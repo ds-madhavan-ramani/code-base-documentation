@@ -139,15 +139,24 @@ The fix for (1) is asking for one section at a time. The fix for (2) is
 never asking the model to describe something it hasn't actually been shown —
 so `utils/prompts.py` grounds each section in real data: the real repo URL,
 the real dependency list, and — for the sections that need code-level
-detail — the real file content and real regex-extracted function/class
-names (`code_parser.build_file_structures`), with an explicit instruction
-not to invent what isn't given.
+detail — the real file content and real tree-sitter-parsed function/class
+names (`code_parser.build_file_structures`, `core/repo_map.py`), with an
+explicit instruction not to invent what isn't given.
+
+Picking *which* files get a full walkthrough follows Aider's repo-map
+algorithm rather than a naive "most functions" count: `core/repo_map.py`
+extracts real definitions and calls per file via tree-sitter (Python,
+JS/TS/TSX, Java — other languages fall back to a lighter regex pass),
+builds a directed graph where an edge R -> D means "file R calls a symbol
+defined in file D", and ranks files with PageRank. A small file that
+everything else depends on outranks a large file nothing calls into — the
+old count-based heuristic got exactly that case backwards.
 
 ```mermaid
 flowchart TD
-    CF["code_files<br/>(real file content)"] --> FS["build_file_structures()<br/>regex: real imports/functions/classes per file"]
+    CF["code_files<br/>(real file content)"] --> FS["build_file_structures()<br/>tree-sitter: real functions/classes/calls per file"]
     A["Odysseus analysis<br/>architecture, overview, how_it_works, ..."] --> CTX["build_doc_context()<br/>+ real repo_url"]
-    FS --> SIG["select_significant_files()<br/>rank by real function/class count"]
+    FS --> SIG["select_significant_files()<br/>PageRank over the real call graph (core/repo_map.py)"]
     CTX --> SIG
     SIG --> FEAT["identify_features()<br/>ONE call — features named only from real files/functions given"]
 

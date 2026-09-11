@@ -80,12 +80,17 @@ DEV_DOCS_TIER1_SECTIONS: List[Dict[str, str]] = [
         "title": "Big Picture",
         "template": """Project: {repo_name}
 
-Big-picture summary from analysis:
+The project's own author describes it as:
+{user_context}
+
+Big-picture summary from code analysis:
 {overview}
 
 Write the opening section of a developer guide, titled "Big Picture". In
 plain, simplified language explain WHAT this codebase does, HOW it works
-at the highest level, and WHY it is built this way. Strip away detail,
+at the highest level, and WHY it is built this way. If the author's own
+description above is given, treat it as authoritative for WHAT/WHY — don't
+contradict it, use the code analysis to fill in HOW. Strip away detail,
 don't list files or functions here.
 
 Format: Markdown, 2-4 short paragraphs. Do not add a heading, one will be added.""",
@@ -168,11 +173,16 @@ list for troubleshooting. Do not add a heading, one will be added.""",
 USER_DOCS_HEAD_SECTIONS: List[Dict[str, str]] = [
     {
         "title": "Big Picture",
-        "template": """Big-picture summary from analysis:
+        "template": """The project's own author describes it as:
+{user_context}
+
+Big-picture summary from code analysis:
 {overview}
 
 Write a short "Big Picture" section for a non-technical user guide: plain
-language, what this does and why someone would use it.
+language, what this does and why someone would use it. If the author's own
+description above is given, ground your answer in it rather than the code
+analysis alone.
 
 Format: Markdown, 2-3 short sentences. Do not add a heading, one will be added.""",
     },
@@ -226,6 +236,7 @@ def build_doc_context(analysis: dict, repo_url: Optional[str] = None) -> dict:
         "key_insights": analysis.get("key_insights", ""),
         "overview": analysis.get("overview", ""),
         "how_it_works": analysis.get("how_it_works", ""),
+        "user_context": analysis.get("user_context") or "(not provided)",
         "modules": ", ".join(analysis.get("key_modules", [])[:5]),
     }
 
@@ -257,18 +268,28 @@ def build_sectioned_doc(ollama_client, model: str, sections: List[Dict[str, str]
 def select_significant_files(code_files: Dict[str, str], file_structures: Dict[str, dict],
                               key_modules: Optional[List[str]] = None,
                               max_files: int = MAX_WALKTHROUGH_FILES) -> List[str]:
-    """Rank files by how much real structure they contain (functions +
-    classes found by regex), so per-file walkthrough calls are spent on the
-    files that matter instead of trivial config/test files."""
+    """Rank files by real importance — Aider's repo-map algorithm: PageRank
+    over a "file R calls a symbol defined in file D" graph (see
+    core/repo_map.py) — so per-file walkthrough calls are spent on files
+    other code actually depends on, not just ones with a lot of code on
+    paper. Falls back to a functions+classes count as a tie-breaker and
+    for languages/files with no graph signal."""
+    from core.repo_map import rank_files_by_importance
+
+    ranks = rank_files_by_importance(code_files, file_structures)
+
     def richness(filename: str) -> int:
         structure = file_structures.get(filename, {})
         return len(structure.get("functions", [])) + len(structure.get("classes", []))
 
-    ranked = sorted(code_files.keys(), key=richness, reverse=True)
-    significant = [f for f in ranked if richness(f) > 0][:max_files]
+    def score(filename: str):
+        return (ranks.get(filename, 0.0), richness(filename))
+
+    ranked = sorted(code_files.keys(), key=score, reverse=True)
+    significant = [f for f in ranked if score(f) > (0.0, 0)][:max_files]
 
     # Always include Odysseus's own key modules, even a thin entrypoint/config
-    # file the regex extractor found no functions/classes in.
+    # file with no detected functions/classes/calls of its own.
     for module in (key_modules or []):
         if module in code_files and module not in significant and len(significant) < max_files:
             significant.append(module)
@@ -288,6 +309,7 @@ def identify_features(ollama_client, model: str, context: dict,
     )[:4000]
 
     prompt = f"""Project: {context['repo_name']}
+The project's own author describes it as: {context['user_context']}
 Architecture: {context['architecture']}
 How it works: {context['how_it_works']}
 

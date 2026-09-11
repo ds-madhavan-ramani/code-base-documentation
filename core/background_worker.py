@@ -104,7 +104,7 @@ class BackgroundWorker:
             self.job_queue.update_job(job.job_id, progress=10,
                                        current_step="Running deep analysis with Odysseus...")
             logger.info(f"Running deep analysis for {job.job_id}...")
-            analysis = self.odysseus.analyze_deep(code_files, job.repo_name)
+            analysis = self.odysseus.analyze_deep(code_files, job.repo_name, user_context=job.user_context)
             self.job_queue.update_job(job.job_id, analysis=analysis, progress=25,
                                        current_step="Generating system diagram...")
 

@@ -3,6 +3,8 @@ from pathlib import Path
 from typing import Dict
 import logging
 
+from core import repo_map
+
 logger = logging.getLogger(__name__)
 
 class CodeParser:
@@ -72,15 +74,26 @@ class CodeParser:
         return ext_map.get(ext, "txt")
 
     def build_file_structures(self, code_files: Dict[str, str]) -> Dict[str, Dict]:
-        """Real, regex-extracted imports/functions/classes for every file.
-
-        Deterministic ground truth (not an LLM guess) that documentation
+        """Real functions/classes/imports (+ calls, for repo_map ranking)
+        for every file — deterministic ground truth documentation
         generation can cite directly instead of inventing function names.
+
+        Tree-sitter AST parsing (core/repo_map.py) is used for languages it
+        has a tag query for (Python, JS/TS/TSX, Java) — it correctly
+        handles multi-line signatures, decorators, and nested classes that
+        defeat single-line regexes. Anything else falls back to the older
+        regex patterns below, which is exactly this method's prior
+        behavior for those languages (no regression, just no upgrade).
         """
-        return {
-            filename: self.extract_structure(content, self.get_language_from_extension(filename))
-            for filename, content in code_files.items()
-        }
+        structures = {}
+        for filename, content in code_files.items():
+            if Path(filename).suffix in repo_map.EXTENSION_TO_TS_LANGUAGE:
+                structures[filename] = repo_map.extract_tags(filename, content)
+            else:
+                lang = self.get_language_from_extension(filename)
+                structures[filename] = self.extract_structure(content, lang)
+                structures[filename].setdefault("calls", [])
+        return structures
 
     def create_file_tree(self, max_depth: int = 3) -> str:
         """Generate file tree structure."""

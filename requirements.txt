@@ -7,7 +7,13 @@ requests==2.31.0
 aiohttp==3.9.1
 pydantic==2.5.3
 python-dotenv==1.0.0
+# AST parsing (core/repo_map.py) for real function/class/call extraction
 tree-sitter==0.21.0
 tree_sitter_languages==1.10.2
+# Repo-map file-importance ranking (PageRank over a real call graph,
+# core/repo_map.py) — numpy/scipy are networkx's own pagerank() dependency
+networkx==3.3
+numpy==1.26.4
+scipy==1.13.1
 odysseus-harness @ git+https://github.com/ds-madhavan-ramani/odysseus.git@main#egg=odysseus-harness&subdirectory=odysseus
 # Note: No Anthropic/Gemini API keys needed - uses local Ollama models only!
