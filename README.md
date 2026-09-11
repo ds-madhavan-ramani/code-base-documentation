@@ -212,6 +212,23 @@ get wrongly pinned to an unrelated file that did make the cut, since that
 was the only file the model had to choose from. This was a real, observed
 failure mode, not a theoretical one.
 
+That widened pool turned out not to be the whole story. `select_significant_files()`
+was already meant to always reserve a slot for Odysseus's own `key_modules`
+— the files its deep-analysis pass explicitly flags as central, even ones
+with too few incoming calls to rank highly on PageRank alone (an email or
+payment integration, say). But on real output this safety net never
+actually fired, for two compounding reasons: (1) `key_modules` entries are
+descriptive strings Odysseus writes itself, like `"common/email/
+IndiaEmailService (notification system)"` — not the real file path
+`common/src/main/java/.../email/IndiaEmailService.java` — so an exact
+`module in code_files` equality check never matched; and (2) even a
+matching module was only appended "if there's room left" after the ranked
+list already filled every slot, which is never true once a repo has more
+than `max_files` scored files. `_matches_key_module()` now matches on the
+file's real basename appearing in the key_module string (a reliable
+signal regardless of how much of the path Odysseus abbreviates), and
+key_modules are reserved slots *before* the ranking fill runs, not after.
+
 Two more grounding fixes worth calling out, both found by reviewing real
 output against an actual 194-file Java/Spring codebase:
 - **Common Tasks, Examples & Troubleshooting** now gets a real per-file
@@ -220,9 +237,10 @@ output against an actual 194-file Java/Spring codebase:
   file's actual path (Java/Kotlin's Maven layout, Python's dotted module
   convention). Previously this section only saw a dependency-name list and
   invented a plausible-looking but fictional API to write examples against
-  — e.g. a fabricated `com.example.common.utils.Normalise.stripAndLowercase()`
-  call that contradicted the real, correctly-grounded `Normalise.java`
-  walkthrough two sections earlier in the same document.
+  — e.g. fabricated `EmailService`/`PaymentService` classes with generic
+  Spring boilerplate, instead of citing the project's real
+  `IndiaEmailService`/`StripeCheckoutData` classes (the two files the
+  key_modules fix above was written to surface).
 - Both documents now catch a model restating its own section title as a
   **bold paragraph** (e.g. a "**How It's Put Together**" line directly
   under the real heading) — the existing dedup only caught a restated
