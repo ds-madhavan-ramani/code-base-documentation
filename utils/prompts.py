@@ -74,6 +74,7 @@ REPO_COMMENT_BATCH_SIZE = int(os.environ.get("DEV_DOCS_REPO_COMMENT_BATCH_SIZE",
 _LEADING_HEADING_RE = re.compile(r"^#{1,6}[ \t].*\n+", re.MULTILINE)
 _HEADING_LINE_RE = re.compile(r"^(#{1,6})([ \t].*)$", re.MULTILINE)
 _LEADING_BOLD_RE = re.compile(r"^\*\*([^\n*]+)\*\*[ \t]*\n+")
+_LEADING_LINE_RE = re.compile(r"^([^\n]+)\n+")
 _FILE_DELIM_RE = re.compile(r"^===FILE:\s*(.+?)\s*===[ \t]*$", re.MULTILINE)
 
 
@@ -96,27 +97,35 @@ def _normalize_title_text(text: str) -> str:
     return " ".join(text.lower().split())
 
 
-def _strip_restated_bold_title(text: str, title: str) -> str:
-    """Models sometimes restate their own section title as a bold
-    paragraph instead of literal '#' heading syntax (which
-    _strip_leading_heading already catches) — e.g. a "**How It's Put
-    Together**" paragraph directly under the real heading we already add.
-    Strips it only on an exact (case/punctuation-insensitive) match
-    against the known title or its basename, so a legitimate short bold
-    lead-in sentence is never touched."""
-    match = _LEADING_BOLD_RE.match(text)
-    if not match:
-        return text
-    candidate = _normalize_title_text(match.group(1))
+def _strip_restated_title(text: str, title: str) -> str:
+    """Models sometimes restate their own section title as the first line
+    of the body instead of relying on the literal '#' heading we already
+    add (which _strip_leading_heading catches) — either wrapped in bold
+    (e.g. a "**How It's Put Together**" paragraph) or as bare plain text
+    (e.g. a "Task Queuing and Scheduling" line, observed with no bold
+    markers at all in a real User Guide run, immediately followed by the
+    real content). Strips either form, but only on an exact
+    (case/punctuation-insensitive) match against the known title or its
+    basename — matched on the bold form first so a legitimate short bold
+    lead-in sentence (which would also match the plain-line check) is
+    never touched, and the plain check never even runs on it."""
     known_titles = {_normalize_title_text(title), _normalize_title_text(title.rsplit("/", 1)[-1])}
-    if candidate in known_titles:
-        return text[match.end():].lstrip()
+
+    bold_match = _LEADING_BOLD_RE.match(text)
+    if bold_match:
+        if _normalize_title_text(bold_match.group(1)) in known_titles:
+            return text[bold_match.end():].lstrip()
+        return text
+
+    plain_match = _LEADING_LINE_RE.match(text)
+    if plain_match and _normalize_title_text(plain_match.group(1)) in known_titles:
+        return text[plain_match.end():].lstrip()
     return text
 
 
 def _normalize_headings(text: str, min_level: int = 3, title: Optional[str] = None) -> str:
-    """Strips a restated leading title (as a heading or as a bold
-    paragraph — see _strip_leading_heading/_strip_restated_bold_title),
+    """Strips a restated leading title (as a heading, a bold paragraph,
+    or bare plain text — see _strip_leading_heading/_strip_restated_title),
     then clamps any OTHER heading the model added mid-body to at least
     min_level. Models routinely give internal sub-structure like "Key
     Functions" a heading level with no regard for what it's nested under
@@ -126,7 +135,7 @@ def _normalize_headings(text: str, min_level: int = 3, title: Optional[str] = No
     correctly."""
     text = _strip_leading_heading(text)
     if title:
-        text = _strip_restated_bold_title(text, title)
+        text = _strip_restated_title(text, title)
 
     def clamp(match: "re.Match") -> str:
         hashes, rest = match.group(1), match.group(2)
